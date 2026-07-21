@@ -24,6 +24,8 @@ spec is authoritative when this plan is ambiguous.
 
 ## Phase 1 — Project foundation
 
+Status: Complete
+
 ### Build
 
 - Scaffold a Next.js 16 App Router application with React, strict TypeScript,
