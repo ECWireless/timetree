@@ -1,7 +1,7 @@
 import { BrandMark } from "@/components/brand-mark";
 import { SignInButton, SignOutButton } from "@/components/auth-buttons";
 import { AuthorizationError } from "@/lib/auth/policy";
-import { getEmptyDashboard } from "@/lib/server/dashboard";
+import { getDashboardData } from "@/lib/server/dashboard";
 
 type HomeProps = {
   searchParams: Promise<{ error?: string }>;
@@ -11,11 +11,11 @@ export const dynamic = "force-dynamic";
 
 export default async function Home({ searchParams }: HomeProps) {
   const { error } = await searchParams;
-  let dashboard: Awaited<ReturnType<typeof getEmptyDashboard>> | null = null;
+  let dashboard: Awaited<ReturnType<typeof getDashboardData>> | null = null;
   let authorizationFailure: AuthorizationError | null = null;
 
   try {
-    dashboard = await getEmptyDashboard();
+    dashboard = await getDashboardData();
   } catch (caught) {
     if (!(caught instanceof AuthorizationError)) {
       throw caught;
