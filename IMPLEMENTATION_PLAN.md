@@ -71,7 +71,8 @@ Status: Complete
 - Add one centralized server authorization guard that rechecks verified,
   normalized session email against the current exact-email allowlist on every
   protected read and action.
-- Render a minimal branded sign-in page and an authenticated empty dashboard.
+- Render a minimal branded sign-in state at `/` and an authenticated empty
+  dashboard at the same route.
 
 ### Verify
 
@@ -247,3 +248,6 @@ Status: Complete
 The MVP is complete only when all seven phases satisfy their verification
 criteria, the production release smoke test passes, and no deferred feature was
 pulled into scope without an explicit spec change.
+
+After the user accepts the completed MVP and its final verification evidence,
+delete this implementation plan as the last repository cleanup step.

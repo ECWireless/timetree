@@ -26,6 +26,15 @@ project-management system.
 - The MVP does not include invitations, organizations, roles, permissions, or
   account switching.
 
+## Open-source distribution
+
+- TimeTree is distributed under the MIT License so people can fork, modify,
+  and self-host it.
+- Runtime URLs, account allowlists, OAuth credentials, and database connections
+  are supplied through environment configuration rather than application
+  constants. Project documentation may identify TimeTree's canonical Coopa
+  deployment, but forks do not inherit its runtime configuration.
+
 ## MVP scope
 
 The authenticated user can:
@@ -429,8 +438,8 @@ product API is not part of the MVP.
 
 ### Routes
 
-- `/` is the authenticated dashboard.
-- `/sign-in` is the Google sign-in page.
+- `/` renders a branded Google sign-in state for unauthenticated visitors and
+  the dashboard for an authorized session.
 - `/api/auth/[...all]` is the Better Auth handler.
 - The selected node is represented by `?node=<id>` so selection is linkable and
   browser navigation works naturally on narrow screens.
