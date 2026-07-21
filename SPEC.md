@@ -46,6 +46,8 @@ The authenticated user can:
 - Run and stop multiple timers concurrently.
 - See all active timers persistently on the dashboard.
 - See direct hours, rolled-up hours, and historical value.
+- Review a selected node's monthly hours and historical value, including its
+  current descendants, with a minimal per-node contribution breakdown.
 - Set an hourly rate on a node and inherit the nearest ancestor's rate.
 - Restore active timers from persisted start timestamps after refresh or a
   closed browser tab.
@@ -57,7 +59,8 @@ The MVP does not include:
 
 - Teams, invitations, organizations, roles, or permission management.
 - Separate client, project, milestone, or task models.
-- Billing, invoices, budgets, or reporting dashboards.
+- Invoice generation, billing workflows, budgets, arbitrary-range reporting
+  dashboards, charts, or exports.
 - Tickets, tags, priorities, due dates, dependencies, sprints, kanban boards,
   reminders, or notifications.
 - Offline mode, native mobile applications, calendar integrations, or imports.
@@ -181,6 +184,33 @@ archival action; there is no separate archived state or archive workflow.
 - An aggregate containing unpriced time shows the sum of its priced entries and
   an unobtrusive indication that some included time is unpriced.
 
+## Monthly summaries
+
+- A selected node has a monthly summary for itself and all of its current
+  descendants, including completed descendants even when they are hidden from
+  the tree.
+- Calendar-month membership is determined exclusively by each entry's
+  `workDate`. An exact-range entry that crosses midnight remains wholly in its
+  recorded work-date month.
+- Monthly summaries include completed historical entries only. Active timers do
+  not contribute until they are stopped and converted into entries.
+- The headline shows rolled-up hours, priced historical value, and the amount of
+  unpriced time when applicable. Value uses each entry's stored rate snapshot,
+  exact duration seconds, and display-time currency rounding.
+- A minimal breakdown contains only nodes with entries in the selected month.
+  Each row shows that node's direct contribution rather than its descendant
+  rollup. The underlying duration seconds, unpriced seconds, and exact
+  pre-rounding values sum to the headline without double-counting. Independently
+  formatted row durations and currency values can differ slightly from the
+  formatted headline because whole-minute formatting and cent rounding are
+  applied for display.
+- Breakdown rows follow current tree order. A relative breadcrumb distinguishes
+  ambiguous titles without introducing separate client or project concepts.
+- Moving a subtree changes which ancestors include its monthly history, just as
+  it changes all-time rollups; TimeTree does not preserve historical tree
+  layouts.
+- A month without entries displays `0h` and `$0.00` with no breakdown rows.
+
 ## Dashboard experience
 
 The authenticated application is one dashboard workspace rather than a set of
@@ -219,6 +249,9 @@ The detail view contains:
 - Breadcrumb path.
 - Inline-editable title, description, and rate.
 - Start/stop timer and manual-entry controls.
+- A compact monthly summary with previous/next controls, a native month
+  selector, rolled-up hours and value, unpriced time, and the direct-contribution
+  breakdown.
 - Direct time-entry history for that node.
 
 ### Search and interaction
@@ -382,7 +415,8 @@ Integrity rules:
 The database does not store breadcrumbs, paths, descendant lists, rolled-up
 totals, calculated monetary values, or historical tree positions. Dashboard
 reads load the user's flat node set plus direct entry aggregates, assemble the
-tree, and calculate descendant rollups in application code.
+tree, and calculate descendant rollups in application code. Monthly summaries
+are also derived on read rather than stored.
 
 ## Server boundary
 
@@ -395,6 +429,9 @@ product API.
   and active timers.
 - `getNodeEntries(nodeId, cursor?)` returns the selected node's 50 most recent
   direct entries and an optional cursor for loading older entries.
+- `getNodeMonthlySummary(nodeId, month)` validates an exact `YYYY-MM` calendar
+  month, resolves the selected node's current owner-scoped descendant set, and
+  returns the rolled-up total plus direct per-node contributions.
 - Selected-node context, including its resolved rate, is folded into the
   dashboard read where practical rather than exposed as a general endpoint.
 - Node title search and breadcrumb matching happen client-side over the already
@@ -442,7 +479,8 @@ product API is not part of the MVP.
   the dashboard for an authorized session.
 - `/api/auth/[...all]` is the Better Auth handler.
 - The selected node is represented by `?node=<id>` so selection is linkable and
-  browser navigation works naturally on narrow screens.
+  browser navigation works naturally on narrow screens. An explicit monthly
+  selection is represented by `?month=YYYY-MM`.
 
 ### Component hierarchy
 
@@ -460,6 +498,7 @@ DashboardPage (server)
     │   ├── NodeEditor
     │   ├── TimeControls
     │   ├── ManualEntryForm
+    │   ├── MonthlySummary
     │   └── EntryList
     │       └── EntryRow
     ├── MoveNodeDialog
@@ -474,6 +513,9 @@ DashboardPage (server)
 - The MVP does not add Redux, React Query, or persisted UI preferences.
 - Selecting a node updates the URL and loads its first entry page from the
   server.
+- When no month is selected, the client derives the user's current local
+  calendar month. Changing the month updates the URL and loads an authoritative
+  owner-scoped summary; previous and next controls use the same path.
 - One shared client clock updates all visible running timers.
 - Inline edits save on Enter or blur and cancel on Escape.
 - Drag-and-drop is client-side. "Move To..." provides an accessible alternative
@@ -487,6 +529,8 @@ DashboardPage (server)
 - Running timers display as `H:MM:SS` and update once per second.
 - Historical entries display as hours and minutes, for example `1h 23m`.
 - Tree totals use the same hours-and-minutes format, for example `42h 15m`.
+- Monthly headline and contribution durations use the same hours-and-minutes
+  format, and monthly values display as USD currency.
 - The MVP does not add a decimal-hours display mode.
 - Duration-based manual entry defaults to the user's current local date.
 - Duration input accepts compact forms including `1h 30m`, `90m`, and `1.5h`.
@@ -502,10 +546,11 @@ DashboardPage (server)
 ### Automated verification
 
 - Unit tests cover tree assembly and rollups, rate inheritance, value math,
-  duration parsing, and display formatting.
+  monthly boundaries and contribution assembly, duration parsing, and display
+  formatting.
 - PostgreSQL integration tests cover ownership boundaries, cycle prevention,
   active-timer uniqueness, atomic timer stopping, recursive completion, moves,
-  and history-safe deletion.
+  history-safe deletion, and owner-scoped monthly summaries.
 - A focused Playwright Chromium suite covers the primary workflow at desktop
   and mobile viewport widths.
 - Browser tests create a real Better Auth test session. Application code does
@@ -527,11 +572,18 @@ DashboardPage (server)
 ## Deployment and release
 
 - Vercel deploys the Next.js application using the standard Node.js runtime.
-- Neon has separate production and development branches.
-- Production at `https://timetree.coopallc.com` uses only the production Neon
-  branch.
-- Vercel preview deployments use the development Neon branch and never
-  production data.
+- Neon uses one production branch for both the production deployment and Vercel
+  preview deployments.
+- Production at `https://timetree.coopallc.com` and Vercel previews use
+  write-capable connections to the same production database.
+- Preview code can therefore mutate production data. This is an explicit risk
+  accepted for the canonical small deployment, not an isolation guarantee that
+  forks should assume is safe for their own environments.
+- Preview runtimes receive the write-capable pooled `DATABASE_URL` only.
+  `DATABASE_URL_UNPOOLED` is reserved for an explicitly confirmed manual
+  production-migration context and is not configured on previews.
+- Previews neither apply nor validate pending migrations. Preview code must
+  remain compatible with the schema currently deployed to production.
 - Local development uses a separately supplied local PostgreSQL connection.
 - Vercel builds do not run database migrations automatically.
 - Before a production migration, the operator classifies it as additive,
@@ -546,10 +598,16 @@ DashboardPage (server)
   `http://localhost:3000/api/auth/callback/google` and
   `https://timetree.coopallc.com/api/auth/callback/google`.
 - Arbitrary preview URLs are build and unauthenticated UI checks rather than
-  supported Google OAuth environments.
-- Required deployment configuration is limited to pooled and direct database
-  URLs, Better Auth secret and base URL, Google credentials, and
-  `ALLOWED_EMAIL`.
+  supported Google OAuth environments. A preview detects Vercel's preview
+  environment, does not initiate Google sign-in, and shows a concise link to the
+  canonical production application instead. Preview auth configuration uses the
+  canonical production base URL and credentials only to satisfy validated
+  server configuration; the preview origin is not added as a trusted OAuth
+  origin.
+- Runtime deployment configuration is limited to the pooled database URL,
+  Better Auth secret and base URL, Google credentials, and `ALLOWED_EMAIL`. The
+  direct database URL is supplied separately only for confirmed manual
+  migration commands.
 - The MVP does not add analytics, error-reporting services, background workers,
   Redis, cron jobs, or an automated production-migration job.
 - Release verification covers sign-in, node creation, manual entry, timer
