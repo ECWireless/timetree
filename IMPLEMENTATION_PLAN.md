@@ -53,6 +53,8 @@ Status: Complete
 
 ## Phase 2 — Persistence and single-account authentication
 
+Status: Complete
+
 ### Build
 
 - Add Drizzle ORM, Drizzle Kit, `pg`, Zod, Better Auth, and the official Better
