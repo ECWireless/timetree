@@ -35,7 +35,11 @@ Before editing files:
    - commit and PR boundary;
    - proportional independent-review gate.
 8. Break the work into sequential tasks.
-9. Wait for explicit approval before beginning implementation.
+9. Propose the intended commit sequence. If the phase would be too large for a
+   comfortably reviewable pull request, propose multiple PR-sized units instead.
+   Commit units are sequential delivery gates, not labels applied after all phase
+   implementation is complete.
+10. Wait for explicit approval before beginning implementation.
 
 Repository-wide workflow files establish the process and approval boundaries.
 Nested guidance may refine instructions for its subtree but may not weaken
@@ -81,39 +85,59 @@ external service, datastore, or foundational pattern.
 Before declaring a PR-sized unit complete or preparing a pull request:
 
 1. Run the agreed verification commands.
-2. Perform user-facing QA, including browser inspection for interface changes.
-3. Review the diff for correctness, regressions, accessibility, maintainability,
+2. Review the diff for correctness, regressions, accessibility, maintainability,
    unnecessary complexity, and phase-scope compliance.
-4. Perform a privacy and security pass:
+3. Perform a privacy and security pass:
    - confirm local environment files and secrets are ignored;
    - confirm no credentials, private hostnames, local absolute paths, private
      URLs, internal notes, or real user data are tracked;
    - confirm public UI copy does not expose implementation details;
    - confirm authentication, analytics, uploads, storage, and external calls are
      intentional and approved.
-5. Run the proportional fresh-context independent-review gate below.
-6. Resolve accepted findings and rerun affected verification.
-7. Update completed implementation-plan items within the PR scope.
-8. Summarize what changed, verification evidence, plan deviations, and remaining
+4. Run the proportional fresh-context independent-review gate below.
+5. Resolve accepted findings and rerun affected verification.
+6. Check in with the user before user-facing or browser QA. Report the review
+   disposition, identify what needs QA, propose exact workflows and viewports,
+   and obtain explicit approval before performing that QA.
+7. Perform the approved user-facing QA, including browser inspection for
+   interface changes, and resolve accepted findings.
+8. Rerun affected verification after QA-driven changes. Obtain focused
+   independent re-review when those changes are material.
+9. Update completed implementation-plan items within the commit scope, then
+   review every change made since the independent-review snapshot. Material
+   changes restart the affected verification and focused-review gates.
+10. Summarize what changed, verification and QA evidence, plan deviations, and remaining
    work.
-9. Keep the PR boundary narrow enough to review comfortably.
+11. Keep the PR boundary narrow enough to review comfortably.
+
+Use sequential commit units. Prepare only one commit's diff at a time; complete its
+automated verification, independent review, user-approved QA when applicable, and
+explicit commit approval before implementing the next commit unit. Do not batch
+multiple prepared commits into a shared review, QA, or approval cycle. Present the
+sequence during the phase debrief. After presenting the final evidence, obtain
+explicit approval, create the commit, and confirm it succeeded before implementing
+the next commit unit. Staging, committing, pushing, and pull-request actions retain
+their separate approval boundaries.
 
 Read `docs/pr-review-workflow.md` before opening or updating a pull request, or
 before responding to review feedback.
 
 ## Independent-review gate
 
-Run independent review after implementation and verification are complete, but
-before declaring a PR-sized unit complete, staging it for publication, or
-preparing its PR. PR readiness—not session end—is the trigger.
+Run independent review after a commit unit's implementation and automated
+verification are complete, but before user-facing QA, commit approval, or work on
+the next commit unit. Commit-unit readiness—not session end or eventual PR
+readiness—is the routine trigger. After accepted review findings are resolved,
+pause for the user-facing QA proposal and approval required above.
 
-If a phase spans multiple PRs, review each PR against its intended base and
-scope. Before the final phase PR merges, also review the integrated phase diff
-against the phase goal and acceptance criteria.
+Review every sequential commit unit against its intended base and scope. If a
+phase spans multiple commits or PRs, also review the integrated phase diff against
+the phase goal and acceptance criteria before the final phase commit or PR is
+declared ready.
 
 ### Reviewer count
 
-- Use one fresh-context, read-only reviewer for a normal PR-sized unit.
+- Use one fresh-context, read-only reviewer for a normal commit or PR-sized unit.
 - Use two reviewers with distinct specialties when work materially changes
   authentication, authorization, privacy, security, migrations, data integrity,
   foundational architecture, or external integrations.
