@@ -26,6 +26,15 @@ describe("serverEnvSchema", () => {
     ).toBeUndefined();
   });
 
+  it("normalizes the allowed email", () => {
+    expect(
+      serverEnvSchema.parse({
+        ...validEnv,
+        ALLOWED_EMAIL: " Person@Example.COM ",
+      }).ALLOWED_EMAIL,
+    ).toBe("person@example.com");
+  });
+
   it.each([
     ["DATABASE_URL", "not-a-url"],
     ["DATABASE_URL_UNPOOLED", "not-a-url"],
