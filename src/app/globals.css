@@ -197,7 +197,8 @@ body {
   color: #ffaba5;
 }
 
-.icon-button[data-tooltip]::after {
+.icon-button[data-tooltip]::after,
+.node-drag-handle[data-tooltip]::after {
   position: absolute;
   z-index: 30;
   top: calc(100% + 0.45rem);
@@ -223,7 +224,8 @@ body {
 }
 
 .icon-button[data-tooltip]:hover::after,
-.icon-button[data-tooltip]:focus-visible::after {
+.icon-button[data-tooltip]:focus-visible::after,
+.node-drag-handle[data-tooltip]:hover::after {
   opacity: 1;
   transform: translate(-50%, 0);
 }
@@ -500,6 +502,21 @@ textarea {
   padding-bottom: 2rem;
 }
 
+.tree-move-status,
+.tree-move-error {
+  margin: 0;
+  padding: 0.65rem clamp(1rem, 3vw, 2rem);
+  font-size: 0.75rem;
+}
+
+.tree-move-status {
+  color: #73b9f5;
+}
+
+.tree-move-error {
+  color: #ffaba5;
+}
+
 .node-list {
   margin: 0;
   padding: 0;
@@ -508,9 +525,10 @@ textarea {
 
 .node-row {
   --row-edge: calc(0.75rem + var(--node-depth) * 1rem);
+  position: relative;
   display: grid;
   min-width: 0;
-  grid-template-columns: 2rem minmax(0, 1fr) 2.75rem;
+  grid-template-columns: 1.75rem 2rem minmax(0, 1fr) 2.75rem;
   align-items: stretch;
   border-block: 1px solid transparent;
   padding-left: var(--row-edge);
@@ -529,6 +547,130 @@ textarea {
   color: var(--color-muted);
 }
 
+.node-row--dragging {
+  opacity: 0.35;
+}
+
+.node-row[data-drop-zone="inside"] {
+  border-color: rgb(115 185 245 / 80%);
+  background: rgb(18 99 173 / 24%);
+}
+
+.node-row--drag-expand-pending {
+  animation: drag-expand-blink 350ms ease-in-out 500ms 2;
+}
+
+@keyframes drag-expand-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.42;
+  }
+}
+
+.node-row[data-drop-zone="before"]::before,
+.node-row[data-drop-zone="after"]::before {
+  position: absolute;
+  z-index: 2;
+  right: 0.5rem;
+  left: var(--row-edge);
+  height: 0.18rem;
+  border-radius: 999px;
+  background: #73b9f5;
+  box-shadow: 0 0 0.7rem rgb(115 185 245 / 65%);
+  content: "";
+}
+
+.node-row[data-drop-zone="before"]::before {
+  top: -0.08rem;
+}
+
+.node-row[data-drop-zone="after"]::before {
+  bottom: -0.08rem;
+}
+
+.node-row[data-drop-zone]::after {
+  position: absolute;
+  z-index: 3;
+  right: 3.15rem;
+  top: 50%;
+  border-radius: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  background: #1263ad;
+  color: white;
+  content: attr(data-drop-label);
+  font-size: 0.625rem;
+  font-weight: 700;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.node-drag-handle {
+  position: relative;
+  display: grid;
+  min-height: 4.15rem;
+  place-items: center;
+  color: var(--color-muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.node-drag-handle:hover {
+  color: var(--color-ink);
+}
+
+.node-drag-handle:active {
+  cursor: grabbing;
+}
+
+.node-drag-handle svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.node-drag-handle[data-tooltip]::after {
+  right: auto;
+  left: 0;
+  transform: translateY(-0.2rem);
+}
+
+.node-drag-handle[data-tooltip]:hover::after {
+  transform: translateY(0);
+}
+
+.node-drag-overlay {
+  display: flex;
+  max-width: min(22rem, calc(100vw - 2rem));
+  min-height: 3.25rem;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid rgb(115 185 245 / 75%);
+  border-radius: 0.55rem;
+  padding: 0.65rem 0.85rem;
+  background: #0b121b;
+  color: var(--color-ink);
+  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 55%);
+  cursor: grabbing;
+}
+
+.node-drag-overlay svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+  color: #73b9f5;
+}
+
+.node-drag-overlay strong {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tree-toggle,
 .add-child-button {
   display: grid;
@@ -543,6 +685,11 @@ textarea {
 .tree-toggle:hover,
 .add-child-button:hover {
   color: var(--color-ink);
+}
+
+.tree-toggle svg {
+  width: 1.1rem;
+  height: 1.1rem;
 }
 
 .tree-toggle--empty {
@@ -636,7 +783,7 @@ textarea {
 }
 
 .tree-child-create {
-  padding: 0.5rem 0.75rem 0.75rem calc(2.75rem + var(--node-depth) * 1rem);
+  padding: 0.5rem 0.75rem 0.75rem calc(4.5rem + var(--node-depth) * 1rem);
   background: #0a0d12;
 }
 
@@ -1149,7 +1296,7 @@ textarea {
   }
 
   .tree-child-create {
-    padding-left: calc(2rem + var(--node-depth) * 0.65rem);
+    padding-left: calc(3.75rem + var(--node-depth) * 0.65rem);
   }
 
   .tree-child-create .node-create {
@@ -1245,7 +1392,7 @@ textarea {
   }
 
   .tree-child-create {
-    padding-left: calc(2rem + var(--node-depth) * 0.75rem);
+    padding-left: calc(3.75rem + var(--node-depth) * 0.75rem);
   }
 
   .node-create {

@@ -4,6 +4,7 @@ import {
   filterCompletedTree,
   formatBreadcrumb,
   getMoveDestinations,
+  getNodeDropDestination,
   searchNodes,
 } from "../../src/lib/nodes/presentation";
 import { assembleNodeTree, type FlatNode } from "../../src/lib/nodes/tree";
@@ -77,5 +78,65 @@ describe("node presentation", () => {
     expect(getMoveDestinations(tree.ordered, source, "archived").map(({ id }) => id)).toEqual([
       "completed-root",
     ]);
+  });
+
+  it("calculates before, after, and inside positions from every authoritative sibling", () => {
+    const dragTree = assembleNodeTree([
+      node({ id: "source-parent", title: "Source parent" }),
+      node({ id: "first", parentId: "source-parent", title: "First" }),
+      node({ id: "source", parentId: "source-parent", position: 1, title: "Source" }),
+      node({
+        id: "hidden-completed",
+        parentId: "source-parent",
+        position: 2,
+        title: "Hidden completed",
+        completedAt: "2026-07-22T00:00:00.000Z",
+      }),
+      node({ id: "last", parentId: "source-parent", position: 3, title: "Last" }),
+      node({ id: "destination", position: 1, title: "Destination" }),
+      node({ id: "destination-child", parentId: "destination", title: "Existing child" }),
+      node({
+        id: "destination-completed-child",
+        parentId: "destination",
+        position: 1,
+        title: "Existing completed child",
+        completedAt: "2026-07-22T00:00:00.000Z",
+      }),
+    ]);
+    const source = dragTree.byId.get("source")!;
+
+    expect(
+      getNodeDropDestination(dragTree.ordered, source, dragTree.byId.get("last")!, "before"),
+    ).toEqual({ parentId: "source-parent", position: 2, targetId: "last", zone: "before" });
+    expect(
+      getNodeDropDestination(dragTree.ordered, source, dragTree.byId.get("last")!, "after"),
+    ).toEqual({ parentId: "source-parent", position: 3, targetId: "last", zone: "after" });
+    expect(
+      getNodeDropDestination(
+        dragTree.ordered,
+        source,
+        dragTree.byId.get("destination")!,
+        "inside",
+      ),
+    ).toEqual({ parentId: "destination", position: 2, targetId: "destination", zone: "inside" });
+  });
+
+  it("rejects cyclic and incomplete-under-completed drop destinations", () => {
+    const source = tree.byId.get("active-root")!;
+    const descendant = tree.byId.get("active-child")!;
+    const completedParent = tree.byId.get("completed-root")!;
+
+    expect(getNodeDropDestination(tree.ordered, source, source, "inside")).toBeNull();
+    expect(getNodeDropDestination(tree.ordered, source, descendant, "inside")).toBeNull();
+    expect(getNodeDropDestination(tree.ordered, source, descendant, "before")).toBeNull();
+    expect(getNodeDropDestination(tree.ordered, descendant, completedParent, "inside")).toBeNull();
+    expect(
+      getNodeDropDestination(
+        tree.ordered,
+        tree.byId.get("completed-child")!,
+        completedParent,
+        "inside",
+      ),
+    ).toEqual({ parentId: "completed-root", position: 0, targetId: "completed-root", zone: "inside" });
   });
 });

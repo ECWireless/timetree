@@ -80,6 +80,19 @@ export function MoveIcon(props: IconProps) {
   );
 }
 
+export function GripIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="9" cy="6" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="6" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="18" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="18" r="0.8" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
 export function TrashIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -100,6 +113,14 @@ export function ChevronRightIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="m9 5 7 7-7 7" />
+    </Icon>
+  );
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m5 9 7 7 7-7" />
     </Icon>
   );
 }

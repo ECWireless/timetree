@@ -1,5 +1,14 @@
 import type { DashboardNode } from "@/lib/nodes/tree";
 
+export type NodeDropZone = "before" | "inside" | "after";
+
+export type NodeDropDestination = {
+  parentId: string | null;
+  position: number;
+  targetId: string;
+  zone: NodeDropZone;
+};
+
 function includesTitle(node: DashboardNode, normalizedQuery: string) {
   return node.title.toLocaleLowerCase().includes(normalizedQuery);
 }
@@ -79,4 +88,53 @@ export function getMoveDestinations(
       (source.completedAt !== null || node.completedAt === null) &&
       (!normalizedQuery || includesTitle(node, normalizedQuery)),
   );
+}
+
+export function getNodeDropDestination(
+  nodes: readonly DashboardNode[],
+  source: DashboardNode,
+  target: DashboardNode,
+  zone: NodeDropZone,
+): NodeDropDestination | null {
+  if (source.id === target.id) {
+    return null;
+  }
+
+  const blockedParentIds = new Set<string>();
+  const work = [source];
+  while (work.length > 0) {
+    const node = work.pop();
+    if (!node) {
+      break;
+    }
+    blockedParentIds.add(node.id);
+    work.push(...node.children);
+  }
+
+  const parentId = zone === "inside" ? target.id : target.parentId;
+  if (parentId !== null && blockedParentIds.has(parentId)) {
+    return null;
+  }
+
+  const parent = parentId === null ? null : nodes.find((node) => node.id === parentId) ?? null;
+  if (parentId !== null && !parent) {
+    return null;
+  }
+  if (source.completedAt === null && parent !== null && parent.completedAt !== null) {
+    return null;
+  }
+
+  const siblings = nodes
+    .filter((node) => node.parentId === parentId && node.id !== source.id)
+    .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+  let position = siblings.length;
+  if (zone !== "inside") {
+    const targetIndex = siblings.findIndex((node) => node.id === target.id);
+    if (targetIndex === -1) {
+      return null;
+    }
+    position = targetIndex + (zone === "after" ? 1 : 0);
+  }
+
+  return { parentId, position, targetId: target.id, zone };
 }
