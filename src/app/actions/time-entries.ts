@@ -132,7 +132,7 @@ function mutationFailure(error: unknown) {
         error.reason === "entry-not-found"
           ? "That time entry is no longer available."
           : error.reason === "invalid-range"
-            ? "The corrected range must end after it starts."
+            ? "The corrected time range is invalid or exceeds the supported duration."
           : "That node is no longer available.",
     };
   }

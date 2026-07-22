@@ -232,6 +232,18 @@ describe("time-entry Server Actions", () => {
       ok: false,
       fieldErrors: { startedAt: ["Work date must match the local start date."] },
     });
+
+    const excessiveRange = await updateTimeEntry({
+      id: created.entry.id,
+      nodeId,
+      mode: "range",
+      start: { kind: "preserve" },
+      end: { kind: "replace", value: "2100-01-01T00:00:00.000Z" },
+    });
+    expect(excessiveRange).toEqual({
+      ok: false,
+      message: "The corrected time range is invalid or exceeds the supported duration.",
+    });
   });
 
   it("validates cursors and deletes entries permanently", async () => {

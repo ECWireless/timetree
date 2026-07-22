@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, getTableColumns, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, lt, or, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { nodes, timeEntries } from "@/db/schema";
@@ -66,34 +66,53 @@ function toTimeEntryRecord(row: typeof timeEntries.$inferSelect): TimeEntryRecor
 }
 
 async function getOwnedNodeRates(userId: string, nodeId: string) {
-  const ownedNodes = await db
-    .select({
-      id: nodes.id,
-      parentId: nodes.parentId,
-      hourlyRateCents: nodes.hourlyRateCents,
-    })
-    .from(nodes)
-    .where(eq(nodes.userId, userId))
-    .orderBy(asc(nodes.id));
-  const byId = new Map(ownedNodes.map((node) => [node.id, node]));
-  const target = byId.get(nodeId);
-  if (!target) {
+  const result = await db.execute<{
+    cycle_detected: boolean;
+    hourly_rate_cents: number | null;
+    node_exists: boolean;
+  }>(sql`
+    with recursive ancestors as (
+      select
+        ${nodes.id} as id,
+        ${nodes.parentId} as parent_id,
+        ${nodes.hourlyRateCents} as hourly_rate_cents,
+        0 as depth,
+        array[${nodes.id}]::uuid[] as visited_ids,
+        false as cycle_detected
+      from ${nodes}
+      where ${nodes.userId} = ${userId} and ${nodes.id} = ${nodeId}
+
+      union all
+
+      select
+        parent.id,
+        parent.parent_id,
+        parent.hourly_rate_cents,
+        child.depth + 1,
+        child.visited_ids || parent.id,
+        parent.id = any(child.visited_ids)
+      from ancestors child
+      join ${nodes} parent
+        on parent.id = child.parent_id and parent.user_id = ${userId}
+      where child.hourly_rate_cents is null and not child.cycle_detected
+    )
+    select
+      exists(select 1 from ancestors where depth = 0) as node_exists,
+      coalesce(bool_or(cycle_detected), false) as cycle_detected,
+      (
+        select hourly_rate_cents
+        from ancestors
+        where hourly_rate_cents is not null
+        order by depth
+        limit 1
+      ) as hourly_rate_cents
+    from ancestors
+  `);
+  const resolved = result.rows[0];
+  if (!resolved?.node_exists || resolved.cycle_detected) {
     throw new TimeEntryMutationError("node-not-found");
   }
-
-  const visited = new Set<string>();
-  let current: typeof target | undefined = target;
-  while (current) {
-    if (visited.has(current.id)) {
-      throw new TimeEntryMutationError("node-not-found");
-    }
-    visited.add(current.id);
-    if (current.hourlyRateCents !== null) {
-      return current.hourlyRateCents;
-    }
-    current = current.parentId === null ? undefined : byId.get(current.parentId);
-  }
-  return null;
+  return resolved.hourly_rate_cents;
 }
 
 async function requireOwnedNode(userId: string, nodeId: string) {

@@ -105,7 +105,8 @@ describe("owner-scoped time-entry service", () => {
   it("snapshots inherited, explicit-zero, override, and unpriced rates", async () => {
     const userId = await insertUser();
     const rootId = await insertNode(userId, "Root", { hourlyRateCents: 12_500 });
-    const inheritedId = await insertNode(userId, "Inherited", { parentId: rootId });
+    const middleId = await insertNode(userId, "Middle", { parentId: rootId });
+    const inheritedId = await insertNode(userId, "Inherited", { parentId: middleId });
     const zeroId = await insertNode(userId, "Zero", {
       parentId: rootId,
       position: 1,
@@ -201,6 +202,9 @@ describe("owner-scoped time-entry service", () => {
     await expect(getNodeEntriesForUser(otherUserId, ownerNodeId)).rejects.toEqual(
       new TimeEntryMutationError("node-not-found"),
     );
+    await expect(
+      createTimeEntryForUser(ownerId, durationInput(otherNodeId)),
+    ).rejects.toEqual(new TimeEntryMutationError("node-not-found"));
     await expect(
       updateTimeEntryForUser(ownerId, created.id, durationInput(otherNodeId)),
     ).rejects.toEqual(new TimeEntryMutationError("node-not-found"));
