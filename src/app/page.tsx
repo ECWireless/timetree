@@ -3,6 +3,8 @@ import { BrandMark } from "@/components/brand-mark";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { AuthorizationError } from "@/lib/auth/policy";
 import { getDashboardData } from "@/lib/server/dashboard";
+import { getNodeEntries } from "@/lib/server/time-entries";
+import type { TimeEntryPage } from "@/lib/time-entries/contracts";
 
 type HomeProps = {
   searchParams: Promise<{ error?: string; node?: string }>;
@@ -26,9 +28,14 @@ export default async function Home({ searchParams }: HomeProps) {
   }
 
   if (dashboard) {
+    const selectedNodeExists = Boolean(node && dashboard.nodes.some((candidate) => candidate.id === node));
+    const initialEntryPage: TimeEntryPage = selectedNodeExists
+      ? await getNodeEntries(node!)
+      : { entries: [], nextCursor: null };
     return (
       <DashboardShell
         email={dashboard.user.email}
+        initialEntryPage={initialEntryPage}
         nodes={dashboard.nodes}
         orderedNodes={dashboard.orderedNodes}
         selectedNodeId={node}

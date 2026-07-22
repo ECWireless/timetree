@@ -45,6 +45,7 @@ import {
   TrashIcon,
 } from "@/components/icons";
 import { NodeTreeList } from "@/components/node-tree-list";
+import { TimeEntryLedger } from "@/components/time-entry-ledger";
 import {
   filterCompletedTree,
   formatBreadcrumb,
@@ -54,32 +55,19 @@ import {
   type NodeDropZone,
 } from "@/lib/nodes/presentation";
 import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
+import type { TimeEntryPage } from "@/lib/time-entries/contracts";
+import { formatRate, parseRateCents } from "@/lib/time-entries/money";
 
 type DashboardShellProps = {
   email: string;
+  initialEntryPage: TimeEntryPage;
   nodes: FlatNode[];
   orderedNodes: DashboardNode[];
   selectedNodeId?: string;
 };
 
-const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-function formatRate(cents: number) {
-  return `${usd.format(cents / 100)}/hr`;
-}
-
 function rateInputValue(cents: number | null) {
   return cents === null ? "" : (cents / 100).toFixed(2);
-}
-
-function parseRateCents(value: string) {
-  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
-  if (!match) {
-    return null;
-  }
-
-  const cents = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
-  return Number.isSafeInteger(cents) && cents <= 2_147_483_647 ? cents : null;
 }
 
 function ZeroMetrics({ compact = false }: { compact?: boolean }) {
@@ -743,6 +731,7 @@ function NodeTree({
 
 export function DashboardShell({
   email,
+  initialEntryPage,
   nodes,
   orderedNodes,
   selectedNodeId,
@@ -1183,6 +1172,12 @@ export function DashboardShell({
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />
               </div>
+              <TimeEntryLedger
+                initialPage={initialEntryPage}
+                node={selectedNode}
+                nodes={orderedNodes}
+                onMutation={mutationSaved}
+              />
               {selectedNode.completedAt === null ? (
                 <div className="detail-child">
                   {creatingDetailChild ? (

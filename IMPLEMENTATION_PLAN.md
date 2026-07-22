@@ -162,7 +162,7 @@ unit before beginning the next.
 
 ### PR 5.1 — Manual ledger foundation
 
-Status: In progress
+Status: Complete
 
 #### Build
 
