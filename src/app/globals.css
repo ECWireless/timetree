@@ -461,7 +461,7 @@ textarea {
 .period-filter {
   display: flex;
   min-width: 0;
-  align-items: end;
+  align-items: flex-end;
   gap: 0.5rem;
 }
 
