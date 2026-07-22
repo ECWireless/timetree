@@ -10,6 +10,21 @@ export type UpdateNodeInput = {
   hourlyRateCents?: number | null;
 };
 
+export type MoveNodeInput = {
+  id: string;
+  parentId: string | null;
+  position?: number;
+};
+
+export type NodeIdInput = {
+  id: string;
+};
+
 export type NodeActionResult =
   | { ok: true; nodeId: string }
-  | { ok: false; message: string; fieldErrors?: Record<string, string[]> };
+  | {
+      ok: false;
+      message: string;
+      fieldErrors?: Record<string, string[]>;
+      blockingNodeIds?: readonly string[];
+    };
