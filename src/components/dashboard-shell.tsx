@@ -31,6 +31,7 @@ import { completeNode, createNode, moveNode, reopenNode, updateNode } from "@/ap
 import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
 import { ConfirmDeleteDialog, MoveNodeDialog } from "@/components/node-dialogs";
+import { DashboardPeriodFilter } from "@/components/dashboard-period-filter";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -59,12 +60,15 @@ import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
 import type { TimeEntryPage } from "@/lib/time-entries/contracts";
 import { formatHistoricalDuration } from "@/lib/time-entries/duration";
 import { formatRate, formatUsd, parseRateCents } from "@/lib/time-entries/money";
+import type { DashboardPeriodInput } from "@/lib/time-entries/period";
 
 type DashboardShellProps = {
   email: string;
   initialEntryPage: TimeEntryPage;
   nodes: FlatNode[];
   orderedNodes: DashboardNode[];
+  period: DashboardPeriodInput;
+  periodRequiresCanonicalization: boolean;
   selectedNodeId?: string;
 };
 
@@ -834,6 +838,8 @@ export function DashboardShell({
   initialEntryPage,
   nodes,
   orderedNodes,
+  period,
+  periodRequiresCanonicalization,
   selectedNodeId,
 }: DashboardShellProps) {
   const router = useRouter();
@@ -1155,6 +1161,10 @@ export function DashboardShell({
             </div>
           ) : null}
         </div>
+        <DashboardPeriodFilter
+          period={period}
+          requiresCanonicalization={periodRequiresCanonicalization}
+        />
         <div className="toolbar-actions">
           <button
             className="icon-button"

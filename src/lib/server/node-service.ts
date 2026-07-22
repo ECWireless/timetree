@@ -1,11 +1,15 @@
 import "server-only";
 
-import { and, asc, eq, getTableColumns, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, gte, inArray, isNull, lt, max, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { activeTimers, nodes, timeEntries, user } from "@/db/schema";
 import type { CreateNodeInput, MoveNodeInput, UpdateNodeInput } from "@/lib/nodes/contracts";
 import { assembleNodeTree, type FlatNode } from "@/lib/nodes/tree";
+import {
+  resolveDashboardPeriod,
+  type DashboardPeriodInput,
+} from "@/lib/time-entries/period";
 
 type NodeTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -165,7 +169,19 @@ function isSiblingPositionConflict(error: unknown) {
   );
 }
 
-export async function getDashboardDataForUser(userId: string) {
+export async function getDashboardDataForUser(
+  userId: string,
+  periodInput: DashboardPeriodInput = { mode: "all" },
+) {
+  const period = resolveDashboardPeriod(periodInput);
+  const entryPredicate =
+    period.mode === "all"
+      ? eq(timeEntries.userId, userId)
+      : and(
+          eq(timeEntries.userId, userId),
+          gte(timeEntries.workDate, period.startDate),
+          lt(timeEntries.workDate, period.endDateExclusive),
+        );
   const directEntryAggregates = db
     .select({
       nodeId: timeEntries.nodeId,
@@ -184,7 +200,7 @@ export async function getDashboardDataForUser(userId: string) {
       ),
     })
     .from(timeEntries)
-    .where(eq(timeEntries.userId, userId))
+    .where(entryPredicate)
     .groupBy(timeEntries.nodeId)
     .as("direct_entry_aggregates");
   const rows = await db

@@ -171,6 +171,7 @@ export const timeEntries = pgTable(
       table.createdAt.desc(),
       table.id.desc(),
     ),
+    index("time_entries_period_idx").on(table.userId, table.workDate, table.nodeId),
     check("time_entries_duration_positive_check", sql`${table.durationSeconds} > 0`),
     check(
       "time_entries_timestamp_pair_check",

@@ -19,6 +19,9 @@ let getDashboardDataForUser: typeof import(
 ).getDashboardDataForUser;
 let moveNodeForUser: typeof import("../../src/lib/server/node-service").moveNodeForUser;
 let NodeMutationError: typeof import("../../src/lib/server/node-service").NodeMutationError;
+let DashboardPeriodError: typeof import(
+  "../../src/lib/time-entries/period"
+).DashboardPeriodError;
 let reopenNodeForUser: typeof import("../../src/lib/server/node-service").reopenNodeForUser;
 let updateNodeForUser: typeof import("../../src/lib/server/node-service").updateNodeForUser;
 let withLockedIncompleteNodeForUser: typeof import(
@@ -49,6 +52,7 @@ describe("owner-scoped node service", () => {
       updateNodeForUser,
       withLockedIncompleteNodeForUser,
     } = await import("../../src/lib/server/node-service"));
+    ({ DashboardPeriodError } = await import("../../src/lib/time-entries/period"));
   });
 
   afterEach(async () => {
@@ -200,6 +204,108 @@ describe("owner-scoped node service", () => {
     expect(dashboard.orderedNodes.some(({ id }) => id === otherRoot.id)).toBe(false);
   });
 
+  it("filters every node aggregate by owner-scoped work-date day and month", async () => {
+    const ownerId = await insertUser();
+    const otherUserId = await insertUser();
+    const root = await createNodeForUser(ownerId, { title: "Root" });
+    const child = await createNodeForUser(ownerId, { title: "Child", parentId: root.id });
+    const completedChild = await createNodeForUser(ownerId, {
+      title: "Completed child",
+      parentId: root.id,
+    });
+    const otherRoot = await createNodeForUser(otherUserId, { title: "Other root" });
+    await completeNodeForUser(ownerId, completedChild.id);
+
+    await pool.query(
+      `insert into time_entries
+         (user_id, node_id, work_date, started_at, ended_at, duration_seconds, hourly_rate_cents)
+       values
+         ($1, $2, '2026-07-21', null, null, 3600, 10000),
+         ($1, $3, '2026-07-22', null, null, 1800, 20000),
+         ($1, $4, '2026-07-22', null, null, 900, null),
+         ($1, $3, '2026-07-31', '2026-07-31T23:55:00Z', '2026-08-01T00:05:00Z', 600, 30000),
+         ($1, $3, '2026-08-01', null, null, 300, 40000),
+         ($5, $6, '2026-07-22', null, null, 7200, 50000)`,
+      [ownerId, root.id, child.id, completedChild.id, otherUserId, otherRoot.id],
+    );
+    await pool.query(
+      `insert into active_timers
+         (user_id, node_id, started_at, work_date, hourly_rate_cents)
+       values ($1, $2, '2026-07-22T12:00:00Z', '2026-07-22', 999999)`,
+      [ownerId, child.id],
+    );
+
+    const july22 = await getDashboardDataForUser(ownerId, {
+      mode: "day",
+      day: "2026-07-22",
+    });
+    const july22ById = new Map(july22.orderedNodes.map((node) => [node.id, node]));
+    expect(july22ById.get(root.id)).toMatchObject({
+      directDurationSeconds: 0,
+      rolledUpDurationSeconds: 1800,
+      rolledUpValueCents: "10000",
+      hasUnpricedTime: false,
+      hasPricedTime: true,
+      rolledUpDurationSecondsIncludingCompleted: 2700,
+      rolledUpValueCentsIncludingCompleted: "10000",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: true,
+    });
+    expect(july22ById.get(child.id)).toMatchObject({
+      directDurationSeconds: 1800,
+      rolledUpDurationSeconds: 1800,
+      rolledUpValueCents: "10000",
+    });
+    expect(july22ById.get(completedChild.id)).toMatchObject({
+      directDurationSeconds: 900,
+      rolledUpDurationSeconds: 900,
+      rolledUpValueCents: "0",
+      hasUnpricedTime: true,
+      hasPricedTime: false,
+    });
+    expect(july22.orderedNodes.some(({ id }) => id === otherRoot.id)).toBe(false);
+
+    const july = await getDashboardDataForUser(ownerId, {
+      mode: "month",
+      month: "2026-07",
+    });
+    expect(july.orderedNodes.find(({ id }) => id === root.id)).toMatchObject({
+      directDurationSeconds: 3600,
+      rolledUpDurationSeconds: 6000,
+      rolledUpValueCents: "25000",
+      rolledUpDurationSecondsIncludingCompleted: 6900,
+      rolledUpValueCentsIncludingCompleted: "25000",
+    });
+
+    const august = await getDashboardDataForUser(ownerId, {
+      mode: "month",
+      month: "2026-08",
+    });
+    expect(august.orderedNodes.find(({ id }) => id === root.id)).toMatchObject({
+      directDurationSeconds: 0,
+      rolledUpDurationSeconds: 300,
+      rolledUpValueCents: "3333",
+    });
+
+    const emptyDay = await getDashboardDataForUser(ownerId, {
+      mode: "day",
+      day: "2026-07-23",
+    });
+    expect(emptyDay.orderedNodes).toHaveLength(3);
+    expect(
+      emptyDay.orderedNodes.every(
+        (node) =>
+          node.directDurationSeconds === 0 &&
+          node.rolledUpDurationSecondsIncludingCompleted === 0 &&
+          node.rolledUpValueCentsIncludingCompleted === "0",
+      ),
+    ).toBe(true);
+
+    await expect(
+      getDashboardDataForUser(ownerId, { mode: "day", day: "2026-02-30" }),
+    ).rejects.toEqual(new DashboardPeriodError());
+  });
+
   it("moves historical rollups between ancestors without altering the entry", async () => {
     const ownerId = await insertUser();
     const sourceRoot = await createNodeForUser(ownerId, { title: "Source" });
@@ -216,7 +322,10 @@ describe("owner-scoped node service", () => {
       [entryId, ownerId, subtree.id],
     );
 
-    const before = await getDashboardDataForUser(ownerId);
+    const before = await getDashboardDataForUser(ownerId, {
+      mode: "day",
+      day: "2026-07-21",
+    });
     const beforeById = new Map(before.orderedNodes.map((node) => [node.id, node]));
     expect(beforeById.get(sourceRoot.id)).toMatchObject({
       rolledUpDurationSeconds: 3600,
@@ -233,7 +342,10 @@ describe("owner-scoped node service", () => {
       position: 0,
     });
 
-    const after = await getDashboardDataForUser(ownerId);
+    const after = await getDashboardDataForUser(ownerId, {
+      mode: "day",
+      day: "2026-07-21",
+    });
     const afterById = new Map(after.orderedNodes.map((node) => [node.id, node]));
     expect(afterById.get(sourceRoot.id)).toMatchObject({
       rolledUpDurationSeconds: 0,

@@ -46,8 +46,8 @@ The authenticated user can:
 - Run and stop multiple timers concurrently.
 - See all active timers persistently on the dashboard.
 - See direct hours, rolled-up hours, and historical value.
-- Review a selected node's monthly hours and historical value, including its
-  current descendants, with a minimal per-node contribution breakdown.
+- Filter the entire tree's hours and historical value by a local calendar day
+  or month while retaining an all-time view.
 - Set an hourly rate on a node and inherit the nearest ancestor's rate.
 - Restore active timers from persisted start timestamps after refresh or a
   closed browser tab.
@@ -186,32 +186,29 @@ archival action; there is no separate archived state or archive workflow.
 - An aggregate containing unpriced time shows the sum of its priced entries and
   an unobtrusive indication that some included time is unpriced.
 
-## Monthly summaries
+## Historical period filters
 
-- A selected node has a monthly summary for itself and all of its current
-  descendants, including completed descendants even when they are hidden from
-  the tree.
-- Calendar-month membership is determined exclusively by each entry's
+- The dashboard tree supports all-time, exact local-calendar-day, and exact
+  calendar-month aggregate views.
+- Day and month membership is determined exclusively by each entry's
   `workDate`. An exact-range entry that crosses midnight remains wholly in its
-  recorded work-date month.
-- Monthly summaries include completed historical entries only. Active timers do
+  recorded work-date day and month.
+- Period-filtered aggregates include historical entries only. Active timers do
   not contribute until they are stopped and converted into entries.
-- The headline shows rolled-up hours, priced historical value, and the amount of
-  unpriced time when applicable. Value uses each entry's stored rate snapshot,
-  exact duration seconds, and display-time currency rounding.
-- A minimal breakdown contains only nodes with entries in the selected month.
-  Each row shows that node's direct contribution rather than its descendant
-  rollup. The underlying duration seconds, unpriced seconds, and exact
-  pre-rounding values sum to the headline without double-counting. Independently
-  formatted row durations and currency values can differ slightly from the
-  formatted headline because whole-minute formatting and cent rounding are
-  applied for display.
-- Breakdown rows follow current tree order. A relative breadcrumb distinguishes
-  ambiguous titles without introducing separate client or project concepts.
-- Moving a subtree changes which ancestors include its monthly history, just as
-  it changes all-time rollups; TimeTree does not preserve historical tree
-  layouts.
-- A month without entries displays `0h` and `$0.00` with no breakdown rows.
+- The selected period is applied to every node's direct aggregate before the
+  application assembles descendant rollups. Hours, priced historical value,
+  priced/unpriced state, and current-tree move behavior otherwise follow the
+  same rules as the all-time view.
+- Completed branches are excluded while completed nodes are hidden and included
+  when completed nodes are shown, for both all-time and filtered aggregates.
+- Filtering does not hide nodes. A node with no matching direct entries or
+  matching entries in an included descendant branch displays `0h` and `$0.00`.
+- The selected node's aggregate metrics follow the tree period. Its direct-entry
+  history remains an unfiltered historical ledger.
+- A completed node selected through a retained or direct URL remains available
+  in the detail pane while completed nodes are hidden. Its non-inclusive metric
+  includes its own matching direct entries and excludes completed descendants;
+  showing completed nodes includes its completed descendant branches.
 
 ## Dashboard experience
 
@@ -223,7 +220,8 @@ management pages.
 - A sticky active-timers strip appears at the top whenever at least one timer is
   running. Each timer shows its node title, breadcrumb, live elapsed time, a
   stop action, and a jump-to-node action.
-- A compact toolbar provides search, "Show completed," and "New root node."
+- A compact toolbar provides search, the all-time/day/month period filter,
+  "Show completed," and "New root node."
 - On wider screens the main area uses two panes: the tree on the left and the
   selected node's details on the right.
 - On narrow screens the tree is the primary view. Selecting a node opens its
@@ -251,9 +249,6 @@ The detail view contains:
 - Breadcrumb path.
 - Inline-editable title, description, and rate.
 - Start/stop timer and manual-entry controls.
-- A compact monthly summary with previous/next controls, a native month
-  selector, rolled-up hours and value, unpriced time, and the direct-contribution
-  breakdown.
 - Direct time-entry history for that node.
 
 ### Search and interaction
@@ -417,8 +412,8 @@ Integrity rules:
 The database does not store breadcrumbs, paths, descendant lists, rolled-up
 totals, calculated monetary values, or historical tree positions. Dashboard
 reads load the user's flat node set plus direct entry aggregates, assemble the
-tree, and calculate descendant rollups in application code. Monthly summaries
-are also derived on read rather than stored.
+tree, and calculate descendant rollups in application code. Period-filtered
+rollups are also derived on read rather than stored.
 
 ## Server boundary
 
@@ -427,13 +422,11 @@ product API.
 
 ### Server-only reads
 
-- `getDashboardData()` returns the user's flat nodes, direct entry aggregates,
-  and active timers.
+- `getDashboardData(period?)` returns the user's flat nodes, direct entry
+  aggregates for the validated all-time, day, or month period, and active
+  timers.
 - `getNodeEntries(nodeId, cursor?)` returns the selected node's 50 most recent
   direct entries and an optional cursor for loading older entries.
-- `getNodeMonthlySummary(nodeId, month)` validates an exact `YYYY-MM` calendar
-  month, resolves the selected node's current owner-scoped descendant set, and
-  returns the rolled-up total plus direct per-node contributions.
 - Selected-node context, including its resolved rate, is folded into the
   dashboard read where practical rather than exposed as a general endpoint.
 - Node title search and breadcrumb matching happen client-side over the already
@@ -481,8 +474,16 @@ product API is not part of the MVP.
   the dashboard for an authorized session.
 - `/api/auth/[...all]` is the Better Auth handler.
 - The selected node is represented by `?node=<id>` so selection is linkable and
-  browser navigation works naturally on narrow screens. An explicit monthly
-  selection is represented by `?month=YYYY-MM`.
+  browser navigation works naturally on narrow screens. A day filter is
+  represented by `?period=day&day=YYYY-MM-DD`; a month filter is represented by
+  `?period=month&month=YYYY-MM`. Absence of period parameters means all time.
+- A valid active filter may arrive with the other mode's stale value; the client
+  removes that inactive parameter with URL replacement. Missing, malformed,
+  unrecognized, conflicting, or duplicate active filter state canonicalizes to
+  all time by removing `period`, `day`, and `month` with URL replacement while
+  preserving node selection. Changing modes always removes both prior date
+  values before adding the new mode's value, and choosing All time removes all
+  three filter parameters.
 
 ### Component hierarchy
 
@@ -491,6 +492,7 @@ DashboardPage (server)
 └── DashboardShell (client)
     ├── ActiveTimersStrip
     ├── DashboardToolbar
+    │   └── PeriodFilter
     ├── TreePane
     │   └── NodeTree
     │       ├── NodeRow
@@ -500,7 +502,6 @@ DashboardPage (server)
     │   ├── NodeEditor
     │   ├── TimeControls
     │   ├── ManualEntryForm
-    │   ├── MonthlySummary
     │   └── EntryList
     │       └── EntryRow
     ├── MoveNodeDialog
@@ -515,9 +516,13 @@ DashboardPage (server)
 - The MVP does not add Redux, React Query, or persisted UI preferences.
 - Selecting a node updates the URL and loads its first entry page from the
   server.
-- When no month is selected, the client derives the user's current local
-  calendar month. Changing the month updates the URL and loads an authoritative
-  owner-scoped summary; previous and next controls use the same path.
+- The all-time period is the default. Switching to day or month derives an
+  initial value from the user's current local calendar fields. Changing the
+  period updates the URL and loads authoritative owner-scoped dashboard
+  aggregates; selecting a node preserves the period parameters.
+- Creating, editing, deleting, or reassigning an entry refreshes the filtered
+  aggregates without discarding valid period or node URL state. The direct
+  ledger remains unfiltered and retains its normal pagination behavior.
 - One shared client clock updates all visible running timers.
 - Inline edits save on Enter or blur and cancel on Escape.
 - Drag-and-drop is client-side. "Move To..." provides an accessible alternative
@@ -531,8 +536,8 @@ DashboardPage (server)
 - Running timers display as `H:MM:SS` and update once per second.
 - Historical entries display as hours and minutes, for example `1h 23m`.
 - Tree totals use the same hours-and-minutes format, for example `42h 15m`.
-- Monthly headline and contribution durations use the same hours-and-minutes
-  format, and monthly values display as USD currency.
+- Period-filtered totals use the same hours-and-minutes format, and historical
+  values display as USD currency.
 - The MVP does not add a decimal-hours display mode.
 - Duration-based manual entry defaults to the user's current local date.
 - Duration input accepts compact forms including `1h 30m`, `90m`, and `1.5h`.
@@ -548,11 +553,11 @@ DashboardPage (server)
 ### Automated verification
 
 - Unit tests cover tree assembly and rollups, rate inheritance, value math,
-  monthly boundaries and contribution assembly, duration parsing, and display
+  day/month boundaries and URL-state parsing, duration parsing, and display
   formatting.
 - PostgreSQL integration tests cover ownership boundaries, cycle prevention,
   active-timer uniqueness, atomic timer stopping, recursive completion, moves,
-  history-safe deletion, and owner-scoped monthly summaries.
+  history-safe deletion, and owner-scoped period-filtered aggregates.
 - A focused Playwright Chromium suite covers the primary workflow at desktop
   and mobile viewport widths.
 - Browser tests create a real Better Auth test session. Application code does

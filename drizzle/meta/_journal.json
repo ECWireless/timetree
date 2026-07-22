@@ -8,6 +8,13 @@
       "when": 1784659929564,
       "tag": "0000_initial_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784753558490,
+      "tag": "0001_hard_hercules",
+      "breakpoints": true
     }
   ]
 }

@@ -209,36 +209,43 @@ Status: Complete
 - Moving a subtree changes ancestor rollups without modifying any historical
   entry.
 
-### PR 5.3 — Monthly summary
+### PR 5.3 — Tree period filter
 
-Status: Not started
+Status: Complete
 
 #### Build
 
-- Add and migrate a reviewed composite owner/node/work-date index for monthly
-  subtree reads.
-- Implement an owner-scoped monthly-summary read that validates `YYYY-MM`, uses
-  entry `workDate`, includes the selected node and its current descendants, and
-  returns both the rolled-up total and direct per-node contributions.
-- Add the selected-node monthly summary with a local-current-month default,
-  previous/next controls, a native month selector, `?month=YYYY-MM` navigation,
-  headline hours and value, unpriced time, and a minimal contributing-node
-  breakdown in current tree order.
-- Display monthly durations and values according to the spec.
+- Add and migrate a reviewed composite owner/work-date/node index for whole-tree
+  period reads.
+- Extend the owner-scoped dashboard aggregate read with validated all-time,
+  exact-day, and exact-month periods based exclusively on entry `workDate`.
+- Apply the filtered direct aggregates to every node before calculating the
+  existing current-tree rollups, including the existing completed-branch
+  visibility behavior and exact historical value rules.
+- Add a compact toolbar period selector with All time, Day, and Month modes plus
+  native date/month inputs. Represent explicit filters in the URL, derive new
+  day/month selections from browser-local calendar fields, and preserve the
+  filter while navigating between nodes.
+- Keep the tree visible when a period has no matching entries and leave the
+  selected node's direct-entry history unfiltered.
 
 #### Verify
 
-- Unit tests cover calendar month boundaries and exact reconciliation of
-  direct-contribution seconds, unpriced seconds, and pre-rounding values without
+- Unit tests cover exact day/month bounds, invalid period state, local calendar
+  defaults, canonical URL-state decisions, and filtered rollups without
   double-counting.
-- Integration tests cover monthly ownership boundaries, empty months, completed
-  descendants, unpriced time, and work-date-based month assignment. A
-  database-seeded active timer remains excluded from the monthly read.
-- With a controlled browser timezone and date, an absent `?month` selects the
-  browser's local current month. At desktop and mobile widths, changing the
-  month updates the selected node's summary and URL, browser Back restores the
-  prior month, and the expected direct-contribution rows are shown. Displayed
-  rows are not required to visually reconcile rounding residuals.
+- Integration tests cover all-time compatibility, day/month ownership
+  boundaries, empty periods, completed branches, unpriced time, work-date-based
+  assignment, and current-tree moves. A database-seeded active timer remains
+  excluded from every historical aggregate view.
+- With a controlled browser timezone and date, switching from All time to Day or
+  Month selects the browser-local value. At desktop and mobile widths, changing
+  the period updates all tree and selected-node aggregate metrics plus the URL;
+  browser Back restores the prior period; node selection preserves the filter;
+  and nodes without matching direct or included-descendant entries remain
+  visible with zero metrics. The same browser path proves direct history and
+  pagination remain unfiltered, then creates or corrects an entry across the
+  selected boundary and observes refreshed metrics without losing URL state.
 
 ## Phase 6 — Concurrent persistent timers
 
@@ -261,7 +268,9 @@ Status: Not started
   snapshot timing, atomic stop, repeated-stop races, and completion blocking.
 - Playwright proves two different nodes can run simultaneously, one node cannot
   run twice, timers survive reload, and stopped time joins both the all-time and
-  selected monthly totals.
+  matching selected day/month totals according to the timer's local `workDate`
+  captured at start, including when the timer later crosses midnight or a month
+  boundary.
 - No background worker, polling service, or server-side ticking process exists.
 
 ## Phase 7 — Accessibility, resilience, and release readiness
@@ -309,7 +318,7 @@ Status: Not started
 - Multiple users per deployment, teams, organizations, invitations, and roles.
 - Separate client/project/task models.
 - Arbitrary-range reports, charts, invoice generation, billing workflows,
-  budgets, and exports. The focused selected-node monthly summary remains in
+  budgets, and exports. The focused whole-tree day/month filter remains in
   scope.
 - Tags, priorities, due dates, reminders, notifications, and integrations.
 - Offline support, native applications, and calendar synchronization.
