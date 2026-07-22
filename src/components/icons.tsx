@@ -62,6 +62,15 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
+export function WarningIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3 2.8 20h18.4L12 3Z" />
+      <path d="M12 9v5M12 17.2v.1" />
+    </Icon>
+  );
+}
+
 export function ReopenIcon(props: IconProps) {
   return (
     <Icon {...props}>

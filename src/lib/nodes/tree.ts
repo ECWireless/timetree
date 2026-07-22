@@ -1,3 +1,5 @@
+import { roundValueNumeratorToCents } from "../time-entries/money";
+
 export type FlatNode = {
   id: string;
   parentId: string | null;
@@ -6,6 +8,14 @@ export type FlatNode = {
   description: string | null;
   hourlyRateCents: number | null;
   completedAt: string | null;
+};
+
+export type DirectEntryAggregate = {
+  nodeId: string;
+  durationSeconds: number;
+  pricedValueNumerator: string;
+  hasUnpricedTime: boolean;
+  hasPricedTime: boolean;
 };
 
 export type NodeBreadcrumb = {
@@ -19,8 +29,10 @@ export type DashboardNode = FlatNode & {
   resolvedHourlyRateCents: number | null;
   directDurationSeconds: number;
   rolledUpDurationSeconds: number;
-  rolledUpValueCents: number;
+  rolledUpValueCents: string;
   hasUnpricedTime: boolean;
+  hasPricedTime: boolean;
+  completedDescendantCount: number;
 };
 
 export type NodeTree = {
@@ -40,7 +52,10 @@ function compareNodes(left: FlatNode, right: FlatNode) {
   return left.position - right.position || left.id.localeCompare(right.id);
 }
 
-export function assembleNodeTree(nodes: readonly FlatNode[]): NodeTree {
+export function assembleNodeTree(
+  nodes: readonly FlatNode[],
+  directEntryAggregates: readonly DirectEntryAggregate[] = [],
+): NodeTree {
   const sourceById = new Map<string, FlatNode>();
   const childrenByParent = new Map<string | null, FlatNode[]>();
 
@@ -108,8 +123,10 @@ export function assembleNodeTree(nodes: readonly FlatNode[]): NodeTree {
       resolvedHourlyRateCents,
       directDurationSeconds: 0,
       rolledUpDurationSeconds: 0,
-      rolledUpValueCents: 0,
+      rolledUpValueCents: "0",
       hasUnpricedTime: false,
+      hasPricedTime: false,
+      completedDescendantCount: 0,
     };
 
     visited.add(node.id);
@@ -131,6 +148,68 @@ export function assembleNodeTree(nodes: readonly FlatNode[]): NodeTree {
   if (visited.size !== nodes.length) {
     const unvisited = nodes.find((node) => !visited.has(node.id));
     throw new NodeTreeDataError(`A cycle makes node ${unvisited?.id ?? "unknown"} unreachable.`);
+  }
+
+  const directValueNumerators = new Map<string, bigint>();
+  const rolledUpValueNumerators = new Map<string, bigint>();
+  const aggregatedNodeIds = new Set<string>();
+
+  for (const aggregate of directEntryAggregates) {
+    if (aggregatedNodeIds.has(aggregate.nodeId)) {
+      throw new NodeTreeDataError(`Duplicate direct aggregate for node ${aggregate.nodeId}.`);
+    }
+    aggregatedNodeIds.add(aggregate.nodeId);
+
+    const node = byId.get(aggregate.nodeId);
+    if (!node) {
+      throw new NodeTreeDataError(`Direct aggregate has a missing node: ${aggregate.nodeId}.`);
+    }
+    if (!Number.isSafeInteger(aggregate.durationSeconds) || aggregate.durationSeconds < 0) {
+      throw new NodeTreeDataError(`Direct duration is invalid for node ${aggregate.nodeId}.`);
+    }
+
+    let numerator: bigint;
+    try {
+      numerator = BigInt(aggregate.pricedValueNumerator);
+    } catch {
+      throw new NodeTreeDataError(`Priced value is invalid for node ${aggregate.nodeId}.`);
+    }
+    if (numerator < 0) {
+      throw new NodeTreeDataError(`Priced value is invalid for node ${aggregate.nodeId}.`);
+    }
+
+    node.directDurationSeconds = aggregate.durationSeconds;
+    node.hasUnpricedTime = aggregate.hasUnpricedTime;
+    node.hasPricedTime = aggregate.hasPricedTime;
+    directValueNumerators.set(node.id, numerator);
+  }
+
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const node = ordered[index];
+    let durationSeconds = node.directDurationSeconds;
+    let valueNumerator = directValueNumerators.get(node.id) ?? BigInt(0);
+    let hasUnpricedTime = node.hasUnpricedTime;
+    let hasPricedTime = node.hasPricedTime;
+    let completedDescendantCount = 0;
+
+    for (const child of node.children) {
+      durationSeconds += child.rolledUpDurationSeconds;
+      valueNumerator += rolledUpValueNumerators.get(child.id) ?? BigInt(0);
+      hasUnpricedTime ||= child.hasUnpricedTime;
+      hasPricedTime ||= child.hasPricedTime;
+      completedDescendantCount +=
+        child.completedDescendantCount + (child.completedAt === null ? 0 : 1);
+    }
+
+    if (!Number.isSafeInteger(durationSeconds)) {
+      throw new NodeTreeDataError(`Rolled-up duration is too large for node ${node.id}.`);
+    }
+    node.rolledUpDurationSeconds = durationSeconds;
+    node.rolledUpValueCents = roundValueNumeratorToCents(valueNumerator).toString();
+    node.hasUnpricedTime = hasUnpricedTime;
+    node.hasPricedTime = hasPricedTime;
+    node.completedDescendantCount = completedDescendantCount;
+    rolledUpValueNumerators.set(node.id, valueNumerator);
   }
 
   return { roots, ordered, byId };

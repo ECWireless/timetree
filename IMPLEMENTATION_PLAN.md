@@ -188,7 +188,7 @@ Status: Complete
 
 ### PR 5.2 — Dashboard aggregates
 
-Status: Not started
+Status: Complete
 
 #### Build
 

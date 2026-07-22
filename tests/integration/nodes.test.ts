@@ -114,6 +114,145 @@ describe("owner-scoped node service", () => {
     });
   });
 
+  it("rolls direct history through completed descendants with exact value and owner boundaries", async () => {
+    const ownerId = await insertUser();
+    const otherUserId = await insertUser();
+    const root = await createNodeForUser(ownerId, { title: "Root" });
+    const child = await createNodeForUser(ownerId, { title: "Child", parentId: root.id });
+    const completedGrandchild = await createNodeForUser(ownerId, {
+      title: "Completed grandchild",
+      parentId: child.id,
+    });
+    const zeroRateChild = await createNodeForUser(ownerId, {
+      title: "Zero-rate child",
+      parentId: root.id,
+    });
+    const otherRoot = await createNodeForUser(otherUserId, { title: "Other root" });
+    await completeNodeForUser(ownerId, completedGrandchild.id);
+
+    await pool.query(
+      `insert into time_entries (user_id, node_id, work_date, duration_seconds, hourly_rate_cents)
+       values
+         ($1, $2, '2026-07-20', 3600, 10000),
+         ($1, $3, '2026-07-20', 1800, 20000),
+         ($1, $4, '2026-07-20', 900, null),
+         ($1, $5, '2026-07-20', 600, 0),
+         ($6, $7, '2026-07-20', 7200, 50000)`,
+      [
+        ownerId,
+        root.id,
+        child.id,
+        completedGrandchild.id,
+        zeroRateChild.id,
+        otherUserId,
+        otherRoot.id,
+      ],
+    );
+    await pool.query(
+      `insert into active_timers (user_id, node_id, started_at, work_date, hourly_rate_cents)
+       values ($1, $2, '2026-07-22T12:00:00Z', '2026-07-22', 999999)`,
+      [ownerId, zeroRateChild.id],
+    );
+
+    const dashboard = await getDashboardDataForUser(ownerId);
+    const byId = new Map(dashboard.orderedNodes.map((node) => [node.id, node]));
+
+    expect(byId.get(root.id)).toMatchObject({
+      directDurationSeconds: 3600,
+      rolledUpDurationSeconds: 6900,
+      rolledUpValueCents: "20000",
+      hasUnpricedTime: true,
+      hasPricedTime: true,
+    });
+    expect(byId.get(child.id)).toMatchObject({
+      directDurationSeconds: 1800,
+      rolledUpDurationSeconds: 2700,
+      rolledUpValueCents: "10000",
+      hasUnpricedTime: true,
+      hasPricedTime: true,
+    });
+    expect(byId.get(completedGrandchild.id)).toMatchObject({
+      directDurationSeconds: 900,
+      rolledUpDurationSeconds: 900,
+      rolledUpValueCents: "0",
+      hasUnpricedTime: true,
+      hasPricedTime: false,
+    });
+    expect(byId.get(zeroRateChild.id)).toMatchObject({
+      directDurationSeconds: 600,
+      rolledUpDurationSeconds: 600,
+      rolledUpValueCents: "0",
+      hasUnpricedTime: false,
+      hasPricedTime: true,
+    });
+    expect(dashboard.orderedNodes.some(({ id }) => id === otherRoot.id)).toBe(false);
+  });
+
+  it("moves historical rollups between ancestors without altering the entry", async () => {
+    const ownerId = await insertUser();
+    const sourceRoot = await createNodeForUser(ownerId, { title: "Source" });
+    const destinationRoot = await createNodeForUser(ownerId, { title: "Destination" });
+    const subtree = await createNodeForUser(ownerId, {
+      title: "Timed subtree",
+      parentId: sourceRoot.id,
+    });
+    const entryId = randomUUID();
+    await pool.query(
+      `insert into time_entries
+         (id, user_id, node_id, work_date, duration_seconds, hourly_rate_cents, notes)
+       values ($1, $2, $3, '2026-07-21', 3600, 12500, 'Synthetic move history')`,
+      [entryId, ownerId, subtree.id],
+    );
+
+    const before = await getDashboardDataForUser(ownerId);
+    const beforeById = new Map(before.orderedNodes.map((node) => [node.id, node]));
+    expect(beforeById.get(sourceRoot.id)).toMatchObject({
+      rolledUpDurationSeconds: 3600,
+      rolledUpValueCents: "12500",
+    });
+    expect(beforeById.get(destinationRoot.id)).toMatchObject({
+      rolledUpDurationSeconds: 0,
+      rolledUpValueCents: "0",
+    });
+
+    await moveNodeForUser(ownerId, {
+      id: subtree.id,
+      parentId: destinationRoot.id,
+      position: 0,
+    });
+
+    const after = await getDashboardDataForUser(ownerId);
+    const afterById = new Map(after.orderedNodes.map((node) => [node.id, node]));
+    expect(afterById.get(sourceRoot.id)).toMatchObject({
+      rolledUpDurationSeconds: 0,
+      rolledUpValueCents: "0",
+    });
+    expect(afterById.get(destinationRoot.id)).toMatchObject({
+      rolledUpDurationSeconds: 3600,
+      rolledUpValueCents: "12500",
+    });
+
+    const storedEntry = await pool.query<{
+      node_id: string;
+      duration_seconds: number;
+      hourly_rate_cents: number;
+      notes: string;
+    }>(
+      `select node_id, duration_seconds, hourly_rate_cents, notes
+       from time_entries
+       where id = $1`,
+      [entryId],
+    );
+    expect(storedEntry.rows).toEqual([
+      {
+        node_id: subtree.id,
+        duration_seconds: 3600,
+        hourly_rate_cents: 12_500,
+        notes: "Synthetic move history",
+      },
+    ]);
+  });
+
   it("keeps concurrent sibling positions unique and contiguous", async () => {
     const ownerId = await insertUser();
     await Promise.all(
