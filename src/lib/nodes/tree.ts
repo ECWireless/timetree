@@ -32,6 +32,10 @@ export type DashboardNode = FlatNode & {
   rolledUpValueCents: string;
   hasUnpricedTime: boolean;
   hasPricedTime: boolean;
+  rolledUpDurationSecondsIncludingCompleted: number;
+  rolledUpValueCentsIncludingCompleted: string;
+  hasUnpricedTimeIncludingCompleted: boolean;
+  hasPricedTimeIncludingCompleted: boolean;
   completedDescendantCount: number;
 };
 
@@ -126,6 +130,10 @@ export function assembleNodeTree(
       rolledUpValueCents: "0",
       hasUnpricedTime: false,
       hasPricedTime: false,
+      rolledUpDurationSecondsIncludingCompleted: 0,
+      rolledUpValueCentsIncludingCompleted: "0",
+      hasUnpricedTimeIncludingCompleted: false,
+      hasPricedTimeIncludingCompleted: false,
       completedDescendantCount: 0,
     };
 
@@ -152,6 +160,7 @@ export function assembleNodeTree(
 
   const directValueNumerators = new Map<string, bigint>();
   const rolledUpValueNumerators = new Map<string, bigint>();
+  const rolledUpValueNumeratorsIncludingCompleted = new Map<string, bigint>();
   const aggregatedNodeIds = new Set<string>();
 
   for (const aggregate of directEntryAggregates) {
@@ -190,26 +199,48 @@ export function assembleNodeTree(
     let valueNumerator = directValueNumerators.get(node.id) ?? BigInt(0);
     let hasUnpricedTime = node.hasUnpricedTime;
     let hasPricedTime = node.hasPricedTime;
+    let durationSecondsIncludingCompleted = node.directDurationSeconds;
+    let valueNumeratorIncludingCompleted = valueNumerator;
+    let hasUnpricedTimeIncludingCompleted = node.hasUnpricedTime;
+    let hasPricedTimeIncludingCompleted = node.hasPricedTime;
     let completedDescendantCount = 0;
 
     for (const child of node.children) {
-      durationSeconds += child.rolledUpDurationSeconds;
-      valueNumerator += rolledUpValueNumerators.get(child.id) ?? BigInt(0);
-      hasUnpricedTime ||= child.hasUnpricedTime;
-      hasPricedTime ||= child.hasPricedTime;
+      durationSecondsIncludingCompleted += child.rolledUpDurationSecondsIncludingCompleted;
+      valueNumeratorIncludingCompleted +=
+        rolledUpValueNumeratorsIncludingCompleted.get(child.id) ?? BigInt(0);
+      hasUnpricedTimeIncludingCompleted ||= child.hasUnpricedTimeIncludingCompleted;
+      hasPricedTimeIncludingCompleted ||= child.hasPricedTimeIncludingCompleted;
+
+      if (child.completedAt === null) {
+        durationSeconds += child.rolledUpDurationSeconds;
+        valueNumerator += rolledUpValueNumerators.get(child.id) ?? BigInt(0);
+        hasUnpricedTime ||= child.hasUnpricedTime;
+        hasPricedTime ||= child.hasPricedTime;
+      }
       completedDescendantCount +=
         child.completedDescendantCount + (child.completedAt === null ? 0 : 1);
     }
 
-    if (!Number.isSafeInteger(durationSeconds)) {
+    if (
+      !Number.isSafeInteger(durationSeconds) ||
+      !Number.isSafeInteger(durationSecondsIncludingCompleted)
+    ) {
       throw new NodeTreeDataError(`Rolled-up duration is too large for node ${node.id}.`);
     }
     node.rolledUpDurationSeconds = durationSeconds;
     node.rolledUpValueCents = roundValueNumeratorToCents(valueNumerator).toString();
     node.hasUnpricedTime = hasUnpricedTime;
     node.hasPricedTime = hasPricedTime;
+    node.rolledUpDurationSecondsIncludingCompleted = durationSecondsIncludingCompleted;
+    node.rolledUpValueCentsIncludingCompleted = roundValueNumeratorToCents(
+      valueNumeratorIncludingCompleted,
+    ).toString();
+    node.hasUnpricedTimeIncludingCompleted = hasUnpricedTimeIncludingCompleted;
+    node.hasPricedTimeIncludingCompleted = hasPricedTimeIncludingCompleted;
     node.completedDescendantCount = completedDescendantCount;
     rolledUpValueNumerators.set(node.id, valueNumerator);
+    rolledUpValueNumeratorsIncludingCompleted.set(node.id, valueNumeratorIncludingCompleted);
   }
 
   return { roots, ordered, byId };

@@ -114,7 +114,7 @@ describe("owner-scoped node service", () => {
     });
   });
 
-  it("rolls direct history through completed descendants with exact value and owner boundaries", async () => {
+  it("returns exact rollups with and without completed descendants across owner boundaries", async () => {
     const ownerId = await insertUser();
     const otherUserId = await insertUser();
     const root = await createNodeForUser(ownerId, { title: "Root" });
@@ -159,17 +159,25 @@ describe("owner-scoped node service", () => {
 
     expect(byId.get(root.id)).toMatchObject({
       directDurationSeconds: 3600,
-      rolledUpDurationSeconds: 6900,
+      rolledUpDurationSeconds: 6000,
       rolledUpValueCents: "20000",
-      hasUnpricedTime: true,
+      hasUnpricedTime: false,
       hasPricedTime: true,
+      rolledUpDurationSecondsIncludingCompleted: 6900,
+      rolledUpValueCentsIncludingCompleted: "20000",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: true,
     });
     expect(byId.get(child.id)).toMatchObject({
       directDurationSeconds: 1800,
-      rolledUpDurationSeconds: 2700,
+      rolledUpDurationSeconds: 1800,
       rolledUpValueCents: "10000",
-      hasUnpricedTime: true,
+      hasUnpricedTime: false,
       hasPricedTime: true,
+      rolledUpDurationSecondsIncludingCompleted: 2700,
+      rolledUpValueCentsIncludingCompleted: "10000",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: true,
     });
     expect(byId.get(completedGrandchild.id)).toMatchObject({
       directDurationSeconds: 900,
@@ -177,6 +185,10 @@ describe("owner-scoped node service", () => {
       rolledUpValueCents: "0",
       hasUnpricedTime: true,
       hasPricedTime: false,
+      rolledUpDurationSecondsIncludingCompleted: 900,
+      rolledUpValueCentsIncludingCompleted: "0",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: false,
     });
     expect(byId.get(zeroRateChild.id)).toMatchObject({
       directDurationSeconds: 600,

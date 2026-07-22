@@ -106,7 +106,9 @@ archival action; there is no separate archived state or archive workflow.
   rows in a consistent order before checking lifecycle rules. Concurrent
   requests must not produce an active timer beneath a completed node or move an
   incomplete node beneath a destination that completes simultaneously.
-- Completion and reopening do not alter time entries, stored rates, or totals.
+- Completion and reopening do not alter time entries or stored rates. Dashboard
+  rollups exclude completed branches while completed nodes are hidden and
+  include those branches when completed nodes are shown.
 
 ## Tree structure and navigation
 

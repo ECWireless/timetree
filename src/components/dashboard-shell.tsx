@@ -72,12 +72,33 @@ function rateInputValue(cents: number | null) {
   return cents === null ? "" : (cents / 100).toFixed(2);
 }
 
-function nodeMetricsLabel(node: DashboardNode, includeDirect: boolean) {
-  const hasMixedRates = node.hasPricedTime && node.hasUnpricedTime;
+function nodeRollup(node: DashboardNode, includeCompleted: boolean) {
+  return includeCompleted
+    ? {
+        durationSeconds: node.rolledUpDurationSecondsIncludingCompleted,
+        valueCents: node.rolledUpValueCentsIncludingCompleted,
+        hasUnpricedTime: node.hasUnpricedTimeIncludingCompleted,
+        hasPricedTime: node.hasPricedTimeIncludingCompleted,
+      }
+    : {
+        durationSeconds: node.rolledUpDurationSeconds,
+        valueCents: node.rolledUpValueCents,
+        hasUnpricedTime: node.hasUnpricedTime,
+        hasPricedTime: node.hasPricedTime,
+      };
+}
+
+function nodeMetricsLabel(
+  node: DashboardNode,
+  includeDirect: boolean,
+  includeCompleted: boolean,
+) {
+  const rollup = nodeRollup(node, includeCompleted);
+  const hasMixedRates = rollup.hasPricedTime && rollup.hasUnpricedTime;
   return [
-    `${formatHistoricalDuration(node.rolledUpDurationSeconds)} rolled up`,
+    `${formatHistoricalDuration(rollup.durationSeconds)} rolled up`,
     includeDirect ? `${formatHistoricalDuration(node.directDurationSeconds)} direct` : null,
-    `${formatUsd(node.rolledUpValueCents)} historical value`,
+    `${formatUsd(rollup.valueCents)} historical value`,
     hasMixedRates
       ? "contains entries with hourly rates and entries without hourly rates"
       : null,
@@ -89,13 +110,16 @@ function nodeMetricsLabel(node: DashboardNode, includeDirect: boolean) {
 function NodeMetrics({
   node,
   compact = false,
+  includeCompleted = false,
   id,
 }: {
   node: DashboardNode;
   compact?: boolean;
+  includeCompleted?: boolean;
   id?: string;
 }) {
-  const hasMixedRates = node.hasPricedTime && node.hasUnpricedTime;
+  const rollup = nodeRollup(node, includeCompleted);
+  const hasMixedRates = rollup.hasPricedTime && rollup.hasUnpricedTime;
   return (
     <span
       id={id}
@@ -106,7 +130,7 @@ function NodeMetrics({
       ]
         .filter(Boolean)
         .join(" ")}
-      aria-label={`Time totals: ${nodeMetricsLabel(node, !compact)}`}
+      aria-label={`Time totals: ${nodeMetricsLabel(node, !compact, includeCompleted)}`}
     >
       <span className={compact ? "node-metrics__rolled" : undefined}>
         {compact && hasMixedRates ? (
@@ -119,7 +143,7 @@ function NodeMetrics({
           </span>
         ) : null}
         <span className="node-metrics__copy">
-          <strong>{formatHistoricalDuration(node.rolledUpDurationSeconds)}</strong>
+          <strong>{formatHistoricalDuration(rollup.durationSeconds)}</strong>
           <small>rolled up</small>
         </span>
       </span>
@@ -130,7 +154,7 @@ function NodeMetrics({
         </span>
       ) : null}
       <span>
-        <strong>{formatUsd(node.rolledUpValueCents)}</strong>
+        <strong>{formatUsd(rollup.valueCents)}</strong>
         <small>value</small>
       </span>
     </span>
@@ -755,7 +779,12 @@ function NodeTree({
                     </small>
                   ) : null}
                 </span>
-                <NodeMetrics id={metricsId} node={node} compact />
+                <NodeMetrics
+                  id={metricsId}
+                  node={node}
+                  compact
+                  includeCompleted={showCompleted}
+                />
               </button>
               {node.completedAt === null ? (
                 <button
@@ -1239,7 +1268,7 @@ export function DashboardShell({
                   {selectedNode.completedAt === null ? "Active" : "Completed"}
                 </span>
               </div>
-              <NodeMetrics node={selectedNode} />
+              <NodeMetrics node={selectedNode} includeCompleted={showCompleted} />
               <div className="detail-fields">
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />
