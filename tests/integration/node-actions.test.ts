@@ -98,6 +98,12 @@ describe("node Server Actions", () => {
     });
     expect(maximum.ok).toBe(true);
 
+    const blankDescription = await updateNode({
+      id: created.nodeId,
+      description: "   ",
+    });
+    expect(blankDescription.ok).toBe(true);
+
     const overflow = await updateNode({
       id: created.nodeId,
       hourlyRateCents: 2_147_483_648,
@@ -107,10 +113,11 @@ describe("node Server Actions", () => {
       fieldErrors: { hourlyRateCents: ["The hourly rate is too large."] },
     });
 
-    const stored = await pool.query<{ hourly_rate_cents: number }>(
-      `select hourly_rate_cents from nodes where user_id = $1 and id = $2`,
+    const stored = await pool.query<{ description: string | null; hourly_rate_cents: number }>(
+      `select description, hourly_rate_cents from nodes where user_id = $1 and id = $2`,
       [userId, created.nodeId],
     );
+    expect(stored.rows[0].description).toBeNull();
     expect(stored.rows[0].hourly_rate_cents).toBe(2_147_483_647);
   });
 });

@@ -26,7 +26,13 @@ const updateNodeSchema = z
   .object({
     id: z.uuid(),
     title: titleSchema.optional(),
-    description: z.string().trim().max(4_000, "Use 4,000 characters or fewer.").nullable().optional(),
+    description: z
+      .string()
+      .trim()
+      .max(4_000, "Use 4,000 characters or fewer.")
+      .nullable()
+      .optional()
+      .transform((value) => (value === "" ? null : value)),
     hourlyRateCents: z
       .int()
       .min(0)

@@ -1,16 +1,17 @@
+import { SignInButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
-import { SignInButton, SignOutButton } from "@/components/auth-buttons";
+import { DashboardShell } from "@/components/dashboard-shell";
 import { AuthorizationError } from "@/lib/auth/policy";
 import { getDashboardData } from "@/lib/server/dashboard";
 
 type HomeProps = {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; node?: string }>;
 };
 
 export const dynamic = "force-dynamic";
 
 export default async function Home({ searchParams }: HomeProps) {
-  const { error } = await searchParams;
+  const { error, node } = await searchParams;
   let dashboard: Awaited<ReturnType<typeof getDashboardData>> | null = null;
   let authorizationFailure: AuthorizationError | null = null;
 
@@ -26,25 +27,12 @@ export default async function Home({ searchParams }: HomeProps) {
 
   if (dashboard) {
     return (
-      <main className="dashboard-empty" aria-labelledby="page-title" data-testid="dashboard-page">
-        <header className="dashboard-empty__header">
-          <div className="wordmark wordmark--compact" aria-label="TimeTree">
-            <BrandMark />
-            <span>TimeTree</span>
-          </div>
-          <SignOutButton />
-        </header>
-
-        <section className="dashboard-empty__content">
-          <p className="eyebrow">Private work ledger</p>
-          <h1 id="page-title">Your workspace is ready.</h1>
-          <p>
-            Start with a root node. Your projects, tasks, and time will grow from there in the next
-            step.
-          </p>
-          <p className="signed-in-as">Signed in as {dashboard.user.email}</p>
-        </section>
-      </main>
+      <DashboardShell
+        email={dashboard.user.email}
+        nodes={dashboard.nodes}
+        orderedNodes={dashboard.orderedNodes}
+        selectedNodeId={node}
+      />
     );
   }
 
