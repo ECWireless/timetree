@@ -10,6 +10,7 @@ import {
   resolveDashboardPeriod,
   type DashboardPeriodInput,
 } from "@/lib/time-entries/period";
+import type { ActiveTimerRecord } from "@/lib/timers/contracts";
 
 type NodeTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -172,17 +173,19 @@ function isSiblingPositionConflict(error: unknown) {
 export async function getDashboardDataForUser(
   userId: string,
   periodInput: DashboardPeriodInput = { mode: "all" },
+  afterHistoricalRead?: () => Promise<void>,
 ) {
   const period = resolveDashboardPeriod(periodInput);
-  const entryPredicate =
-    period.mode === "all"
-      ? eq(timeEntries.userId, userId)
-      : and(
-          eq(timeEntries.userId, userId),
-          gte(timeEntries.workDate, period.startDate),
-          lt(timeEntries.workDate, period.endDateExclusive),
-        );
-  const directEntryAggregates = db
+  return db.transaction(async (tx) => {
+    const entryPredicate =
+      period.mode === "all"
+        ? eq(timeEntries.userId, userId)
+        : and(
+            eq(timeEntries.userId, userId),
+            gte(timeEntries.workDate, period.startDate),
+            lt(timeEntries.workDate, period.endDateExclusive),
+          );
+    const directEntryAggregates = tx
     .select({
       nodeId: timeEntries.nodeId,
       durationSeconds: sql<string>`sum(${timeEntries.durationSeconds}::bigint)::text`.as(
@@ -203,7 +206,7 @@ export async function getDashboardDataForUser(
     .where(entryPredicate)
     .groupBy(timeEntries.nodeId)
     .as("direct_entry_aggregates");
-  const rows = await db
+    const rows = await tx
     .select({
       ...getTableColumns(nodes),
       directDurationSeconds: directEntryAggregates.durationSeconds,
@@ -215,29 +218,47 @@ export async function getDashboardDataForUser(
     .leftJoin(directEntryAggregates, eq(nodes.id, directEntryAggregates.nodeId))
     .where(eq(nodes.userId, userId))
     .orderBy(asc(nodes.position), asc(nodes.id));
-  const flatNodes = rows.map(toFlatNode);
-  const tree = assembleNodeTree(
-    flatNodes,
-    rows.flatMap((row) =>
-      row.directDurationSeconds === null
-        ? []
-        : [
-            {
-              nodeId: row.id,
-              durationSeconds: Number(row.directDurationSeconds),
-              pricedValueNumerator: row.directPricedValueNumerator ?? "0",
-              hasUnpricedTime: row.hasDirectUnpricedTime ?? false,
-              hasPricedTime: row.hasDirectPricedTime ?? false,
-            },
-          ],
-    ),
-  );
+    // This optional synchronization seam lets integration tests pause the real
+    // dashboard transaction at the snapshot boundary without changing runtime behavior.
+    await afterHistoricalRead?.();
+    const timerRows = await tx
+    .select()
+    .from(activeTimers)
+    .where(eq(activeTimers.userId, userId))
+    .orderBy(asc(activeTimers.startedAt), asc(activeTimers.id));
+    const flatNodes = rows.map(toFlatNode);
+    const tree = assembleNodeTree(
+      flatNodes,
+      rows.flatMap((row) =>
+        row.directDurationSeconds === null
+          ? []
+          : [
+              {
+                nodeId: row.id,
+                durationSeconds: Number(row.directDurationSeconds),
+                pricedValueNumerator: row.directPricedValueNumerator ?? "0",
+                hasUnpricedTime: row.hasDirectUnpricedTime ?? false,
+                hasPricedTime: row.hasDirectPricedTime ?? false,
+              },
+            ],
+      ),
+    );
 
-  return {
-    nodes: flatNodes,
-    roots: tree.roots,
-    orderedNodes: tree.ordered,
-  };
+    return {
+      nodes: flatNodes,
+      roots: tree.roots,
+      orderedNodes: tree.ordered,
+      activeTimers: timerRows.map(
+        (timer): ActiveTimerRecord => ({
+          id: timer.id,
+          nodeId: timer.nodeId,
+          startedAt: timer.startedAt.toISOString(),
+          workDate: timer.workDate,
+          hourlyRateCents: timer.hourlyRateCents,
+        }),
+      ),
+    };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
 export async function createNodeForUser(userId: string, input: CreateNodeInput) {
