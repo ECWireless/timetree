@@ -959,7 +959,7 @@ export function DashboardShell({
         );
         return;
       }
-      if (selectedNode.completedAt !== null) {
+      if (selectedNode.completedAt === null) {
         setShowCompleted(true);
       }
       router.refresh();

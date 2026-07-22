@@ -565,11 +565,17 @@ test("searches, moves, completes, reopens, and deletes nodes", async ({
 
     await page.getByRole("button", { name: "Complete node" }).click();
     await expect(page.locator(".status-pill")).toHaveText("Completed");
+    await expect(page.getByRole("button", { name: "Show completed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     if (isMobile) {
       await page.getByRole("button", { name: "Back to tree" }).click();
-      await expect(page.getByRole("heading", { level: 1, name: "Node tree" })).toBeFocused();
-      await page.getByRole("button", { name: "Show completed" }).click();
-      await page.getByRole("button", { name: "Shared work, completed" }).click();
+      const completedTreeButton = page.getByRole("button", {
+        name: "Shared work, completed",
+      });
+      await expect(completedTreeButton).toBeFocused();
+      await completedTreeButton.click();
     }
     await page.getByRole("button", { name: "Reopen node" }).click();
     await expect(page.locator(".status-pill")).toHaveText("Active");
@@ -595,6 +601,13 @@ test("searches, moves, completes, reopens, and deletes nodes", async ({
       "true",
     );
     await expect(page.getByRole("heading", { level: 1, name: "Old client" })).toBeVisible();
+    await page.getByRole("button", { name: "Show completed" }).click();
+    await page.getByRole("button", { name: "Reopen node" }).click();
+    await expect(page.getByRole("button", { name: "Show completed" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.locator(".status-pill")).toHaveText("Active");
   } finally {
     await seeded.cleanup();
   }

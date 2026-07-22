@@ -264,7 +264,10 @@ export async function moveNodeForUser(userId: string, input: MoveNodeInput) {
           throw new NodeMutationError("parent-not-found");
         }
       }
-      if (input.parentId === source.id || getSubtreeIds(lockedNodes, source.id).includes(input.parentId ?? "")) {
+      if (
+        input.parentId !== null &&
+        new Set(getSubtreeIds(lockedNodes, source.id)).has(input.parentId)
+      ) {
         throw new NodeMutationError("cycle");
       }
       if (source.completedAt === null && destination !== null && destination.completedAt !== null) {
