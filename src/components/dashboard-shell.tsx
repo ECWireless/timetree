@@ -14,6 +14,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createNode, updateNode } from "@/app/actions/nodes";
 import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
+import { NodeTreeList } from "@/components/node-tree-list";
 import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
 
 type DashboardShellProps = {
@@ -421,8 +422,8 @@ function RateEditor({ node, onSaved }: { node: DashboardNode; onSaved: () => voi
   );
 }
 
-type NodeBranchProps = {
-  branch: DashboardNode[];
+type NodeTreeProps = {
+  roots: DashboardNode[];
   selectedNodeId?: string;
   expanded: Set<string>;
   creatingChildFor: string | null;
@@ -434,8 +435,8 @@ type NodeBranchProps = {
   registerNodeButton: (nodeId: string, element: HTMLButtonElement | null) => void;
 };
 
-function NodeBranch({
-  branch,
+function NodeTree({
+  roots,
   selectedNodeId,
   expanded,
   creatingChildFor,
@@ -445,17 +446,18 @@ function NodeBranch({
   onCreated,
   onCancelCreate,
   registerNodeButton,
-}: NodeBranchProps) {
+}: NodeTreeProps) {
   return (
-    <ul className="node-list">
-      {branch.map((node) => {
-        const depth = node.breadcrumb.length - 1;
+    <NodeTreeList
+      roots={roots}
+      expanded={expanded}
+      renderNode={(node, depth) => {
         const visualDepth = Math.min(depth, 12);
         const hasChildren = node.children.length > 0;
         const isExpanded = expanded.has(node.id);
 
         return (
-          <li key={node.id}>
+          <>
             <div
               className={node.id === selectedNodeId ? "node-row node-row--selected" : "node-row"}
               style={{ "--node-depth": visualDepth } as CSSProperties}
@@ -506,24 +508,10 @@ function NodeBranch({
                 />
               </div>
             ) : null}
-            {hasChildren && isExpanded ? (
-              <NodeBranch
-                branch={node.children}
-                selectedNodeId={selectedNodeId}
-                expanded={expanded}
-                creatingChildFor={creatingChildFor}
-                onSelect={onSelect}
-                onToggle={onToggle}
-                onAddChild={onAddChild}
-                onCreated={onCreated}
-                onCancelCreate={onCancelCreate}
-                registerNodeButton={registerNodeButton}
-              />
-            ) : null}
-          </li>
+          </>
         );
-      })}
-    </ul>
+      }}
+    />
   );
 }
 
@@ -674,8 +662,7 @@ export function DashboardShell({
 
       <div className="dashboard-toolbar" aria-label="Tree tools">
         <div>
-          <p className="eyebrow">Private work ledger</p>
-          <p>{nodes.length === 1 ? "1 node" : `${nodes.length} nodes`}</p>
+          <p className="eyebrow">{nodes.length === 1 ? "1 node" : `${nodes.length} nodes`}</p>
         </div>
         <button className="button button--primary" type="button" onClick={() => setCreatingRoot(true)}>
           New root node
@@ -704,8 +691,8 @@ export function DashboardShell({
             </div>
           ) : (
             <div className="node-tree" aria-label="Work nodes">
-              <NodeBranch
-                branch={rootNodes}
+              <NodeTree
+                roots={rootNodes}
                 selectedNodeId={selectedNode?.id}
                 expanded={expanded}
                 creatingChildFor={creatingTreeChildFor}

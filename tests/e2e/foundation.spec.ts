@@ -208,7 +208,7 @@ test("builds and edits a URL-selected hierarchy", async ({ context, page, isMobi
     await page.getByLabel("Child node title for Website").fill("Research");
     await page.getByLabel("Child node title for Website").press("Enter");
     await expect(page.getByRole("heading", { level: 1, name: "Research" })).toBeVisible();
-    await expect(page.locator(".node-list .node-list")).toHaveCount(2);
+    await expect(page.locator('.node-list > li[aria-level="3"]')).toHaveCount(1);
 
     await page.getByRole("button", { name: "Edit title" }).click();
     await page.getByLabel("Node title").fill("Discovery");
