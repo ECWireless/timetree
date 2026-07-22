@@ -91,6 +91,8 @@ Status: Complete
 
 ## Phase 3 — Usable node tree
 
+Status: Complete
+
 ### Build
 
 - Implement `getDashboardData()` and pure functions that assemble the flat node
