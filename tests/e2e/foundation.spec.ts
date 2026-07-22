@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { makeSignature } from "better-auth/crypto";
 import { Pool } from "pg";
 
@@ -13,6 +14,169 @@ if (!connectionString) {
 }
 
 const pool = new Pool({ connectionString });
+
+async function expectCenteredDialog(page: Page, dialog: Locator) {
+  await expect(dialog).toHaveCSS("animation-name", "dialog-enter");
+  await page.waitForTimeout(200);
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  // Native-dialog and mobile viewport rounding can differ by a handful of CSS pixels.
+  expect(Math.abs(box!.x + box!.width / 2 - viewport!.width / 2)).toBeLessThan(8);
+  expect(Math.abs(box!.y + box!.height / 2 - viewport!.height / 2)).toBeLessThan(8);
+}
+
+async function dragNodeTo(
+  page: Page,
+  sourceName: string,
+  targetName: string,
+  zone: "before" | "inside" | "after",
+) {
+  const sourceRow = page.getByRole("button", { name: sourceName, exact: true }).locator("..");
+  const targetRow = page.getByRole("button", { name: targetName, exact: true }).locator("..");
+  const handle = sourceRow.locator(".node-drag-handle");
+  await expect(handle).toBeVisible();
+  await expect(handle).toHaveCSS("touch-action", "none");
+  const handleBox = await handle.boundingBox();
+  const targetBox = await targetRow.boundingBox();
+  expect(handleBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+  const startX = handleBox!.x + handleBox!.width / 2;
+  const startY = handleBox!.y + handleBox!.height / 2;
+  const targetYRatio = zone === "before" ? 0.1 : zone === "after" ? 0.9 : 0.5;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 8, startY + 8, { steps: 3 });
+  await page.mouse.move(
+    targetBox!.x + Math.min(targetBox!.width / 2, 120),
+    targetBox!.y + targetBox!.height * targetYRatio,
+    { steps: 12 },
+  );
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+}
+
+async function touchDragNodeTo(
+  page: Page,
+  sourceName: string,
+  targetName: string,
+  zone: "before" | "inside" | "after",
+) {
+  const sourceRow = page.getByRole("button", { name: sourceName, exact: true }).locator("..");
+  const targetRow = page.getByRole("button", { name: targetName, exact: true }).locator("..");
+  const handle = sourceRow.locator(".node-drag-handle");
+  const handleBox = await handle.boundingBox();
+  const targetBox = await targetRow.boundingBox();
+  expect(handleBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+  await page.evaluate(() => {
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        document.documentElement.dataset.lastDragPointerType = event.pointerType;
+      },
+      { capture: true, once: true },
+    );
+  });
+  const session = await page.context().newCDPSession(page);
+  const start = {
+    x: handleBox!.x + handleBox!.width / 2,
+    y: handleBox!.y + handleBox!.height / 2,
+  };
+  const targetYRatio = zone === "before" ? 0.1 : zone === "after" ? 0.9 : 0.5;
+  const end = {
+    x: targetBox!.x + Math.min(targetBox!.width / 2, 120),
+    y: targetBox!.y + targetBox!.height * targetYRatio,
+  };
+
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ ...start, id: 1, radiusX: 1, radiusY: 1, force: 1 }],
+  });
+  for (let step = 1; step <= 16; step += 1) {
+    const progress = step / 16;
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [
+        {
+          x: start.x + (end.x - start.x) * progress,
+          y: start.y + (end.y - start.y) * progress,
+          id: 1,
+          radiusX: 1,
+          radiusY: 1,
+          force: 1,
+        },
+      ],
+    });
+  }
+  await page.waitForTimeout(100);
+  await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await session.detach();
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.lastDragPointerType))
+    .toBe("touch");
+}
+
+async function dragNodeWithAutoScroll(page: Page, sourceName: string, targetName: string) {
+  const pane = page.locator(".tree-pane");
+  const sourceRow = page.getByRole("button", { name: sourceName, exact: true }).locator("..");
+  const targetRow = page.getByRole("button", { name: targetName, exact: true }).locator("..");
+  const handle = sourceRow.locator(".node-drag-handle");
+  const handleBox = await handle.boundingBox();
+  const paneBox = await pane.boundingBox();
+  expect(handleBox).not.toBeNull();
+  expect(paneBox).not.toBeNull();
+  const startX = handleBox!.x + handleBox!.width / 2;
+  const startY = handleBox!.y + handleBox!.height / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 8, startY + 8, { steps: 3 });
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await page.mouse.move(paneBox!.x + paneBox!.width / 2, paneBox!.y + paneBox!.height - 8);
+    await page.waitForTimeout(75);
+    const candidateBox = await targetRow.boundingBox();
+    if (
+      candidateBox &&
+      candidateBox.y >= paneBox!.y &&
+      candidateBox.y + candidateBox.height <= paneBox!.y + paneBox!.height
+    ) {
+      break;
+    }
+  }
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(async () => {
+      const candidateBox = await targetRow.boundingBox();
+      return Boolean(
+        candidateBox &&
+          candidateBox.y >= paneBox!.y &&
+          candidateBox.y + candidateBox.height <= paneBox!.y + paneBox!.height,
+      );
+    })
+    .toBe(true);
+  const targetBox = await targetRow.boundingBox();
+  expect(targetBox).not.toBeNull();
+  await page.mouse.move(
+    targetBox!.x + Math.min(targetBox!.width / 2, 120),
+    targetBox!.y + targetBox!.height / 2,
+    { steps: 8 },
+  );
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+}
+
+async function expectRootOrder(page: Page, names: string[]) {
+  await expect
+    .poll(() =>
+      page.locator('.node-list > li[aria-level="1"] > .node-row .node-select').evaluateAll(
+        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+    )
+    .toEqual(names);
+}
 
 async function seedSession(email: string, emailVerified: boolean) {
   const userId = `browser-user-${randomUUID()}`;
@@ -35,6 +199,8 @@ async function seedSession(email: string, emailVerified: boolean) {
     cookie: `${token}.${signature}`,
     userId,
     async cleanup() {
+      await pool.query(`delete from active_timers where user_id = $1`, [userId]);
+      await pool.query(`delete from time_entries where user_id = $1`, [userId]);
       await pool.query(`delete from "user" where id = $1`, [userId]);
     },
   };
@@ -54,6 +220,22 @@ async function seedHierarchy(userId: string, depth: number) {
   }
 
   return parentId;
+}
+
+async function insertNode(
+  userId: string,
+  title: string,
+  position: number,
+  parentId: string | null = null,
+  completed = false,
+) {
+  const result = await pool.query<{ id: string }>(
+    `insert into nodes (user_id, parent_id, position, title, completed_at)
+     values ($1, $2, $3, $4, $5)
+     returning id`,
+    [userId, parentId, position, title, completed ? new Date("2026-07-22T00:00:00Z") : null],
+  );
+  return result.rows[0].id;
 }
 
 test.afterAll(async () => {
@@ -211,8 +393,8 @@ test("builds and edits a URL-selected hierarchy", async ({ context, page, isMobi
     await expect(page.locator('.node-list > li[aria-level="3"]')).toHaveCount(1);
 
     await page.getByRole("button", { name: "Edit title" }).click();
-    await page.getByLabel("Node title").fill("Discovery");
-    await page.getByLabel("Node title").press("Enter");
+    await page.getByLabel("Node title", { exact: true }).fill("Discovery");
+    await page.getByLabel("Node title", { exact: true }).press("Enter");
     await expect(page.getByRole("heading", { level: 1, name: "Discovery" })).toBeVisible();
 
     await page.getByRole("button", { name: "Add description" }).click();
@@ -231,7 +413,10 @@ test("builds and edits a URL-selected hierarchy", async ({ context, page, isMobi
     await expect(page).toHaveURL(discoveryUrl);
     await expect(page.getByRole("heading", { level: 1, name: "Discovery" })).toBeVisible();
 
-    await page.goBack();
+    await page
+      .getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: "Website", exact: true })
+      .click();
     await expect(page.getByRole("heading", { level: 1, name: "Website" })).toBeVisible();
 
     if (isMobile) {
@@ -289,6 +474,403 @@ test("keeps deep inline child creation within a narrow desktop pane", async ({
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     expect(hasHorizontalOverflow).toBe(false);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("searches, moves, completes, reopens, and deletes nodes", async ({
+  context,
+  page,
+  isMobile,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    for (let position = 0; position < 20; position += 1) {
+      await insertNode(seeded.userId, `Filler ${position + 1}`, position);
+    }
+    const sourceRootId = await insertNode(seeded.userId, "Client Alpha", 20);
+    const sourceId = await insertNode(seeded.userId, "Shared work", 0, sourceRootId);
+    await insertNode(seeded.userId, "Sibling project", 1, sourceRootId);
+    const destinationId = await insertNode(seeded.userId, "Destination", 21);
+    await insertNode(seeded.userId, "Shared work", 0, destinationId);
+    await insertNode(seeded.userId, "Old client", 22, null, true);
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+
+    await expect(page.getByRole("button", { name: "Old client", exact: true })).toHaveCount(0);
+    await page.getByLabel("Search node titles").fill("shared");
+    const searchResults = page.locator("#tree-search-results");
+    await expect(searchResults.getByRole("button")).toHaveCount(2);
+    await expect(searchResults).toContainText("Client Alpha / Shared work");
+    await expect(searchResults).toContainText("Destination / Shared work");
+    await searchResults.getByRole("button").filter({ hasText: "Client Alpha" }).click();
+    await expect(page).toHaveURL(new RegExp(`node=${sourceId}`));
+    await expect(page.getByRole("heading", { level: 1, name: "Shared work" })).toBeVisible();
+    const targetTreeButton = page.getByRole("button", { name: "Shared work", exact: true });
+    if (isMobile) {
+      await page.getByRole("button", { name: "Back to tree" }).click();
+      await expect(targetTreeButton).toBeVisible();
+      await expect(targetTreeButton).toBeFocused();
+      await targetTreeButton.click();
+    } else {
+      await expect(targetTreeButton).toBeVisible();
+      const targetBox = await targetTreeButton.boundingBox();
+      const viewport = page.viewportSize();
+      expect(targetBox).not.toBeNull();
+      expect(viewport).not.toBeNull();
+      expect(targetBox!.y).toBeGreaterThanOrEqual(0);
+      expect(targetBox!.y + targetBox!.height).toBeLessThanOrEqual(viewport!.height);
+    }
+
+    await page.getByRole("button", { name: "Move To…" }).click();
+    const moveDialog = page.getByRole("dialog", { name: /Choose a new parent/ });
+    await expectCenteredDialog(page, moveDialog);
+    await expect(moveDialog.getByLabel("Search destinations")).toBeFocused();
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Client Alpha");
+    await expect(
+      moveDialog.locator(".move-browser__nodes").getByRole("button", {
+        name: /Sibling project/,
+      }),
+    ).toBeVisible();
+    await moveDialog.getByRole("button", { name: "Up one level" }).click();
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Root");
+    await expect(moveDialog.getByRole("button", { name: "Move here" })).toBeFocused();
+    const destinationBrowserButton = moveDialog
+      .locator(".move-browser__nodes")
+      .getByRole("button", { name: /Destination/ });
+    await destinationBrowserButton.focus();
+    await destinationBrowserButton.press("Enter");
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Destination");
+    await expect(moveDialog.getByRole("button", { name: "Move here" })).toBeFocused();
+    await moveDialog.getByLabel("Search destinations").fill("Client Alpha");
+    await expect(moveDialog.locator('[aria-label="Search move destinations"]')).toContainText(
+      "Client Alpha",
+    );
+    await moveDialog.getByLabel("Search destinations").fill("");
+    await moveDialog.getByRole("button", { name: "Move here" }).click();
+    const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+    await expect(breadcrumb.getByRole("button", { name: "Destination" })).toBeVisible();
+    await expect(breadcrumb.getByText("Shared work", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Complete node" }).click();
+    await expect(page.locator(".status-pill")).toHaveText("Completed");
+    await expect(page.getByRole("button", { name: "Show completed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    if (isMobile) {
+      await page.getByRole("button", { name: "Back to tree" }).click();
+      const completedTreeButton = page.getByRole("button", {
+        name: "Shared work, completed",
+      });
+      await expect(completedTreeButton).toBeFocused();
+      await completedTreeButton.click();
+    }
+    await page.getByRole("button", { name: "Reopen node" }).click();
+    await expect(page.locator(".status-pill")).toHaveText("Active");
+
+    const deleteTrigger = page.getByRole("button", { name: "Delete node" });
+    await deleteTrigger.click();
+    const deleteDialog = page.getByRole("dialog", { name: /Permanently delete/ });
+    await expectCenteredDialog(page, deleteDialog);
+    await expect(deleteDialog.locator(".dialog-copy")).toHaveText(
+      "This removes the node and every descendant. Deletion is blocked only when this subtree contains a time entry or a running timer.",
+    );
+    await deleteDialog.press("Escape");
+    await expect(deleteTrigger).toBeFocused();
+    await deleteTrigger.click();
+    await page.getByRole("button", { name: "Delete permanently" }).click();
+    await expect(page).not.toHaveURL(new RegExp(`node=${sourceId}`));
+    await expect(page.getByRole("heading", { level: 1, name: "Shared work" })).toHaveCount(0);
+
+    await page.getByLabel("Search node titles").fill("Old client");
+    await page.locator("#tree-search-results").getByRole("button").click();
+    await expect(page.getByRole("button", { name: "Show completed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("heading", { level: 1, name: "Old client" })).toBeVisible();
+    await page.getByRole("button", { name: "Show completed" }).click();
+    await page.getByRole("button", { name: "Reopen node" }).click();
+    await expect(page.getByRole("button", { name: "Show completed" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.locator(".status-pill")).toHaveText("Active");
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("drags nodes before, after, and inside with Move To parity", async ({
+  context,
+  page,
+  isMobile,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const alphaId = await insertNode(seeded.userId, "Drag Alpha", 0);
+    const betaId = await insertNode(seeded.userId, "Drag Beta", 1);
+    const destinationId = await insertNode(seeded.userId, "Drag Destination", 2);
+    const dialogSourceId = await insertNode(seeded.userId, "Dialog Source", 3);
+    const existingChildId = await insertNode(
+      seeded.userId,
+      "Existing destination child",
+      0,
+      destinationId,
+    );
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+
+    if (isMobile) {
+      await touchDragNodeTo(page, "Drag Beta", "Drag Alpha", "before");
+    } else {
+      await dragNodeTo(page, "Drag Beta", "Drag Alpha", "before");
+    }
+    await expectRootOrder(page, [
+      "Drag Beta",
+      "Drag Alpha",
+      "Drag Destination",
+      "Dialog Source",
+    ]);
+
+    await dragNodeTo(page, "Drag Beta", "Drag Destination", "after");
+    await expectRootOrder(page, [
+      "Drag Alpha",
+      "Drag Destination",
+      "Drag Beta",
+      "Dialog Source",
+    ]);
+
+    await dragNodeTo(page, "Drag Beta", "Drag Destination", "inside");
+    await expect(page.getByRole("button", { name: "Drag Beta", exact: true })).toBeVisible();
+    await expect(page.locator('.node-list > li[aria-level="2"]')).toHaveCount(2);
+
+    await page.getByRole("button", { name: "Dialog Source", exact: true }).click();
+    await page.getByRole("button", { name: "Move To…" }).click();
+    const moveDialog = page.getByRole("dialog", { name: /Choose a new parent/ });
+    await moveDialog
+      .locator(".move-browser__nodes")
+      .getByRole("button", { name: /Drag Destination/ })
+      .click();
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Drag Destination");
+    await expect(moveDialog.getByRole("button", { name: "Move here" })).toBeFocused();
+    await moveDialog.getByRole("button", { name: "Move here" }).click();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Breadcrumb" })
+        .getByRole("button", { name: "Drag Destination" }),
+    ).toBeVisible();
+
+    const persisted = await pool.query<{ id: string; parent_id: string | null; position: number }>(
+      `select id, parent_id, position
+       from nodes
+       where id = any($1::uuid[])
+       order by parent_id nulls first, position`,
+      [[alphaId, betaId, destinationId, dialogSourceId, existingChildId]],
+    );
+    expect(persisted.rows).toEqual([
+      { id: alphaId, parent_id: null, position: 0 },
+      { id: destinationId, parent_id: null, position: 1 },
+      { id: existingChildId, parent_id: destinationId, position: 0 },
+      { id: betaId, parent_id: destinationId, position: 1 },
+      { id: dialogSourceId, parent_id: destinationId, position: 2 },
+    ]);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("expands a collapsed branch after a two-pulse drag hover", async ({
+  context,
+  page,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const sourceId = await insertNode(seeded.userId, "Hover Source", 0);
+    const parentId = await insertNode(seeded.userId, "Collapsed Parent", 1);
+    const childId = await insertNode(seeded.userId, "Revealed Child", 0, parentId);
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+
+    const sourceHandle = page
+      .getByRole("button", { name: "Hover Source", exact: true })
+      .locator("..")
+      .locator(".node-drag-handle");
+    const parentRow = page
+      .getByRole("button", { name: "Collapsed Parent", exact: true })
+      .locator("..");
+    const sourceBox = await sourceHandle.boundingBox();
+    const parentBox = await parentRow.boundingBox();
+    expect(sourceBox).not.toBeNull();
+    expect(parentBox).not.toBeNull();
+    await page.mouse.move(
+      sourceBox!.x + sourceBox!.width / 2,
+      sourceBox!.y + sourceBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(sourceBox!.x + sourceBox!.width / 2 + 8, sourceBox!.y + 8, {
+      steps: 3,
+    });
+    await page.mouse.move(
+      parentBox!.x + Math.min(parentBox!.width / 2, 120),
+      parentBox!.y + parentBox!.height / 2,
+      { steps: 10 },
+    );
+
+    await expect(parentRow).toHaveClass(/node-row--drag-expand-pending/);
+    await expect(parentRow).toHaveCSS("animation-name", "drag-expand-blink");
+    await expect(parentRow).toHaveCSS("animation-delay", /0\.5s|500ms/);
+    await expect(parentRow).toHaveCSS("animation-iteration-count", "2");
+    await expect(page.getByRole("button", { name: "Collapse Collapsed Parent" })).toBeVisible({
+      timeout: 2_000,
+    });
+    const childRow = page.getByRole("button", { name: "Revealed Child", exact: true }).locator("..");
+    const childBox = await childRow.boundingBox();
+    expect(childBox).not.toBeNull();
+    await page.mouse.move(
+      childBox!.x + Math.min(childBox!.width / 2, 120),
+      childBox!.y + childBox!.height / 2,
+      { steps: 8 },
+    );
+    await page.waitForTimeout(100);
+    await page.mouse.up();
+
+    await expect(page.getByRole("button", { name: "Collapse Revealed Child" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Hover Source", exact: true })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const result = await pool.query<{ parent_id: string | null; position: number }>(
+          `select parent_id, position from nodes where id = $1`,
+          [sourceId],
+        );
+        return result.rows[0];
+      })
+      .toEqual({ parent_id: childId, position: 0 });
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("autoscrolls an overflowing tree while dragging", async ({
+  context,
+  page,
+  isMobile,
+}) => {
+  test.skip(isMobile, "Desktop uses the independently scrolling tree pane.");
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const sourceId = await insertNode(seeded.userId, "Scroll Source", 0);
+    for (let position = 1; position <= 28; position += 1) {
+      await insertNode(seeded.userId, `Scroll filler ${position}`, position);
+    }
+    const targetId = await insertNode(seeded.userId, "Scroll Target", 29);
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+
+    const paneBox = await page.locator(".tree-pane").boundingBox();
+    const targetBox = await page
+      .getByRole("button", { name: "Scroll Target", exact: true })
+      .locator("..")
+      .boundingBox();
+    expect(paneBox).not.toBeNull();
+    expect(targetBox).not.toBeNull();
+    expect(targetBox!.y).toBeGreaterThanOrEqual(paneBox!.y + paneBox!.height);
+    await dragNodeWithAutoScroll(page, "Scroll Source", "Scroll Target");
+    await expect(page.getByRole("button", { name: "Collapse Scroll Target" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Scroll Source", exact: true })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const result = await pool.query<{ parent_id: string | null; position: number }>(
+          `select parent_id, position from nodes where id = $1`,
+          [sourceId],
+        );
+        return result.rows[0];
+      })
+      .toEqual({ parent_id: targetId, position: 0 });
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("identifies every running timer that blocks recursive completion", async ({
+  context,
+  page,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const rootId = await insertNode(seeded.userId, "Timed project", 0);
+    const childId = await insertNode(seeded.userId, "Running child", 0, rootId);
+    await pool.query(
+      `insert into active_timers (user_id, node_id, started_at, work_date)
+       values
+         ($1, $2, now(), '2026-07-22'),
+         ($1, $3, now(), '2026-07-22')`,
+      [seeded.userId, rootId, childId],
+    );
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto(`/?node=${rootId}`);
+
+    await page.getByRole("button", { name: "Complete node" }).click();
+
+    const completionAlert = page.locator('.detail-error[role="alert"]');
+    await expect(completionAlert).toContainText(
+      "Stop the running timers in this subtree first.",
+    );
+    await expect(completionAlert).toContainText("Running: Timed project;");
+    await expect(completionAlert).toContainText("Timed project / Running child");
+    await expect(page.locator(".status-pill")).toHaveText("Active");
   } finally {
     await seeded.cleanup();
   }

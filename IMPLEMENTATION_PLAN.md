@@ -123,6 +123,8 @@ Status: Complete
 
 ## Phase 4 — Tree organization and lifecycle
 
+Status: Complete
+
 ### Build
 
 - Implement transactional moves to a parent and sibling position.

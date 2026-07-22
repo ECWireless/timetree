@@ -17,7 +17,11 @@ const allowedEmail = "node-action-user@example.test";
 const pool = new Pool({ connectionString });
 const userIds = new Set<string>();
 let requestHeaders = new Headers();
+let completeNode: typeof import("../../src/app/actions/nodes").completeNode;
 let createNode: typeof import("../../src/app/actions/nodes").createNode;
+let deleteNode: typeof import("../../src/app/actions/nodes").deleteNode;
+let moveNode: typeof import("../../src/app/actions/nodes").moveNode;
+let reopenNode: typeof import("../../src/app/actions/nodes").reopenNode;
 let updateNode: typeof import("../../src/app/actions/nodes").updateNode;
 
 vi.mock("next/headers", () => ({
@@ -59,7 +63,9 @@ describe("node Server Actions", () => {
     vi.stubEnv("GOOGLE_CLIENT_SECRET", "synthetic-google-client-secret");
     vi.stubEnv("ALLOWED_EMAIL", allowedEmail);
 
-    ({ createNode, updateNode } = await import("../../src/app/actions/nodes"));
+    ({ completeNode, createNode, deleteNode, moveNode, reopenNode, updateNode } = await import(
+      "../../src/app/actions/nodes"
+    ));
   });
 
   afterEach(async () => {
@@ -81,6 +87,18 @@ describe("node Server Actions", () => {
   it("authorizes before returning validation details or mutating data", async () => {
     const before = await pool.query<{ count: string }>("select count(*) from nodes");
     await expect(createNode({ title: "" })).rejects.toEqual(
+      new AuthorizationError("missing-session"),
+    );
+    await expect(
+      moveNode({ id: "not-a-uuid", parentId: null }),
+    ).rejects.toEqual(new AuthorizationError("missing-session"));
+    await expect(completeNode({ id: "not-a-uuid" })).rejects.toEqual(
+      new AuthorizationError("missing-session"),
+    );
+    await expect(reopenNode({ id: "not-a-uuid" })).rejects.toEqual(
+      new AuthorizationError("missing-session"),
+    );
+    await expect(deleteNode({ id: "not-a-uuid" })).rejects.toEqual(
       new AuthorizationError("missing-session"),
     );
 
@@ -123,5 +141,57 @@ describe("node Server Actions", () => {
     );
     expect(stored.rows[0].description).toBeNull();
     expect(stored.rows[0].hourly_rate_cents).toBe(2_147_483_647);
+  });
+
+  it("authorizes and exposes the organization and lifecycle mutations", async () => {
+    const userId = await seedAuthorizedSession();
+    const root = await createNode({ title: "Root" });
+    const destination = await createNode({ title: "Destination" });
+    expect(root.ok && destination.ok).toBe(true);
+    if (!root.ok || !destination.ok) {
+      throw new Error("Expected node creation to succeed.");
+    }
+
+    expect(
+      await moveNode({ id: root.nodeId, parentId: destination.nodeId, position: 0 }),
+    ).toEqual({ ok: true, nodeId: root.nodeId });
+    expect(await completeNode({ id: destination.nodeId })).toEqual({
+      ok: true,
+      nodeId: destination.nodeId,
+    });
+    expect(await reopenNode({ id: root.nodeId })).toEqual({
+      ok: true,
+      nodeId: root.nodeId,
+    });
+    expect(await deleteNode({ id: root.nodeId })).toEqual({
+      ok: true,
+      nodeId: root.nodeId,
+    });
+
+    const remaining = await pool.query<{ id: string; completed_at: Date | null }>(
+      `select id, completed_at from nodes where user_id = $1`,
+      [userId],
+    );
+    expect(remaining.rows).toEqual([{ id: destination.nodeId, completed_at: null }]);
+  });
+
+  it("returns stable validation and lifecycle failures", async () => {
+    await seedAuthorizedSession();
+    expect(await completeNode({ id: "not-a-uuid" })).toMatchObject({
+      ok: false,
+      fieldErrors: { id: expect.any(Array) },
+    });
+
+    const destination = await createNode({ title: "Completed destination" });
+    const source = await createNode({ title: "Source" });
+    if (!destination.ok || !source.ok) {
+      throw new Error("Expected node creation to succeed.");
+    }
+    await completeNode({ id: destination.nodeId });
+
+    expect(await moveNode({ id: source.nodeId, parentId: destination.nodeId })).toEqual({
+      ok: false,
+      message: "Reopen the destination before adding or moving a node there.",
+    });
   });
 });

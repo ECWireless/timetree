@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -8,13 +9,50 @@ import {
   type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  DndContext,
+  DragOverlay,
+  MeasuringStrategy,
+  PointerSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragMoveEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 
-import { createNode, updateNode } from "@/app/actions/nodes";
+import { completeNode, createNode, moveNode, reopenNode, updateNode } from "@/app/actions/nodes";
 import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
+import { ConfirmDeleteDialog, MoveNodeDialog } from "@/components/node-dialogs";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  EyeIcon,
+  EyeOffIcon,
+  GripIcon,
+  MoveIcon,
+  PlusIcon,
+  ReopenIcon,
+  SearchIcon,
+  TrashIcon,
+} from "@/components/icons";
 import { NodeTreeList } from "@/components/node-tree-list";
+import {
+  filterCompletedTree,
+  formatBreadcrumb,
+  getNodeDropDestination,
+  searchNodes,
+  type NodeDropDestination,
+  type NodeDropZone,
+} from "@/lib/nodes/presentation";
 import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
 
 type DashboardShellProps = {
@@ -422,7 +460,92 @@ function RateEditor({ node, onSaved }: { node: DashboardNode; onSaved: () => voi
   );
 }
 
+function dropZoneForEvent(event: DragMoveEvent | DragEndEvent): NodeDropZone | null {
+  const activeRect = event.active.rect.current.translated;
+  const overRect = event.over?.rect;
+  if (!activeRect || !overRect || overRect.height === 0) {
+    return null;
+  }
+
+  const activeCenter = activeRect.top + activeRect.height / 2;
+  const relativePosition = (activeCenter - overRect.top) / overRect.height;
+  if (relativePosition < 0.28) {
+    return "before";
+  }
+  if (relativePosition > 0.72) {
+    return "after";
+  }
+  return "inside";
+}
+
+function describeDrop(node: DashboardNode, zone: NodeDropZone) {
+  if (zone === "inside") {
+    return `Move inside ${node.title}`;
+  }
+  return `Move ${zone} ${node.title}`;
+}
+
+function TreeRowDragContainer({
+  children,
+  disabled,
+  dropIntent,
+  expandPending,
+  node,
+  rowClassName,
+  style,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  dropIntent: NodeDropDestination | null;
+  expandPending: boolean;
+  node: DashboardNode;
+  rowClassName: string;
+  style: CSSProperties;
+}) {
+  const {
+    isDragging,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef: setDraggableNodeRef,
+  } = useDraggable({ id: node.id, disabled });
+  const { setNodeRef: setDroppableNodeRef } = useDroppable({ id: node.id, disabled });
+  const setRowRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      setDraggableNodeRef(element);
+      setDroppableNodeRef(element);
+    },
+    [setDraggableNodeRef, setDroppableNodeRef],
+  );
+  const isDropTarget = dropIntent?.targetId === node.id;
+
+  return (
+    <div
+      ref={setRowRef}
+      className={[
+        rowClassName,
+        isDragging ? "node-row--dragging" : "",
+        expandPending ? "node-row--drag-expand-pending" : "",
+      ].filter(Boolean).join(" ")}
+      data-drop-zone={isDropTarget ? dropIntent.zone : undefined}
+      data-drop-label={isDropTarget ? describeDrop(node, dropIntent.zone) : undefined}
+      style={style}
+    >
+      <span
+        ref={setActivatorNodeRef}
+        className="node-drag-handle"
+        data-tooltip={`Drag ${node.title}`}
+        aria-hidden="true"
+        {...listeners}
+      >
+        <GripIcon />
+      </span>
+      {children}
+    </div>
+  );
+}
+
 type NodeTreeProps = {
+  allNodes: DashboardNode[];
   roots: DashboardNode[];
   selectedNodeId?: string;
   expanded: Set<string>;
@@ -432,10 +555,15 @@ type NodeTreeProps = {
   onAddChild: (nodeId: string) => void;
   onCreated: (nodeId: string, parentId: string | null) => void;
   onCancelCreate: () => void;
+  onDragStarted: () => void;
+  onDrop: (sourceId: string, destination: NodeDropDestination) => void;
+  onExpandForDrag: (nodeId: string) => void;
   registerNodeButton: (nodeId: string, element: HTMLButtonElement | null) => void;
+  dragPending: boolean;
 };
 
 function NodeTree({
+  allNodes,
   roots,
   selectedNodeId,
   expanded,
@@ -445,23 +573,104 @@ function NodeTree({
   onAddChild,
   onCreated,
   onCancelCreate,
+  onDragStarted,
+  onDrop,
+  onExpandForDrag,
   registerNodeButton,
+  dragPending,
 }: NodeTreeProps) {
-  return (
-    <NodeTreeList
-      roots={roots}
-      expanded={expanded}
-      renderNode={(node, depth) => {
-        const visualDepth = Math.min(depth, 12);
-        const hasChildren = node.children.length > 0;
-        const isExpanded = expanded.has(node.id);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [dropIntent, setDropIntent] = useState<NodeDropDestination | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const nodeById = useMemo(() => new Map(allNodes.map((node) => [node.id, node])), [allNodes]);
+  const activeNode = activeNodeId ? nodeById.get(activeNodeId) : undefined;
+  const expandCandidate = dropIntent ? nodeById.get(dropIntent.targetId) : undefined;
+  const autoExpandCandidateId =
+    dropIntent?.zone === "inside" &&
+    expandCandidate &&
+    expandCandidate.children.length > 0 &&
+    !expanded.has(expandCandidate.id)
+      ? expandCandidate.id
+      : null;
 
-        return (
-          <>
-            <div
-              className={node.id === selectedNodeId ? "node-row node-row--selected" : "node-row"}
-              style={{ "--node-depth": visualDepth } as CSSProperties}
-            >
+  useEffect(() => {
+    if (!autoExpandCandidateId) {
+      return;
+    }
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 500 : 1_200;
+    const timer = window.setTimeout(() => onExpandForDrag(autoExpandCandidateId), delay);
+    return () => window.clearTimeout(timer);
+  }, [autoExpandCandidateId, onExpandForDrag]);
+
+  function resolveDropIntent(event: DragMoveEvent | DragEndEvent) {
+    const source = nodeById.get(String(event.active.id));
+    const target = event.over ? nodeById.get(String(event.over.id)) : undefined;
+    const zone = dropZoneForEvent(event);
+    if (!source || !target || !zone) {
+      return null;
+    }
+    return getNodeDropDestination(allNodes, source, target, zone);
+  }
+
+  function dragStarted(event: DragStartEvent) {
+    setActiveNodeId(String(event.active.id));
+    setDropIntent(null);
+    onDragStarted();
+  }
+
+  function dragMoved(event: DragMoveEvent) {
+    setDropIntent(resolveDropIntent(event));
+  }
+
+  function dragEnded(event: DragEndEvent) {
+    const destination = resolveDropIntent(event);
+    const sourceId = String(event.active.id);
+    setActiveNodeId(null);
+    setDropIntent(null);
+    if (destination) {
+      onDrop(sourceId, destination);
+    }
+  }
+
+  function dragCancelled() {
+    setActiveNodeId(null);
+    setDropIntent(null);
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={dragStarted}
+      onDragMove={dragMoved}
+      onDragEnd={dragEnded}
+      onDragCancel={dragCancelled}
+    >
+      <NodeTreeList
+        roots={roots}
+        expanded={expanded}
+        renderNode={(node, depth) => {
+          const visualDepth = Math.min(depth, 12);
+          const hasChildren = node.children.length > 0;
+          const isExpanded = expanded.has(node.id);
+
+          return (
+            <>
+              <TreeRowDragContainer
+                node={node}
+                disabled={dragPending}
+                dropIntent={dropIntent}
+                expandPending={autoExpandCandidateId === node.id}
+                rowClassName={[
+                  "node-row",
+                  node.id === selectedNodeId ? "node-row--selected" : "",
+                  node.completedAt !== null ? "node-row--completed" : "",
+                ].filter(Boolean).join(" ")}
+                style={{ "--node-depth": visualDepth } as CSSProperties}
+              >
               {hasChildren ? (
                 <button
                   className="tree-toggle"
@@ -470,7 +679,7 @@ function NodeTree({
                   aria-expanded={isExpanded}
                   onClick={() => onToggle(node.id)}
                 >
-                  <span aria-hidden="true">{isExpanded ? "−" : "+"}</span>
+                  {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
                 </button>
               ) : (
                 <span className="tree-toggle tree-toggle--empty" aria-hidden="true" />
@@ -479,39 +688,56 @@ function NodeTree({
                 ref={(element) => registerNodeButton(node.id, element)}
                 className="node-select"
                 type="button"
-                aria-label={node.title}
+                aria-label={node.completedAt === null ? node.title : `${node.title}, completed`}
                 aria-current={node.id === selectedNodeId ? "page" : undefined}
                 onClick={() => onSelect(node.id)}
               >
-                <span>{node.title}</span>
+                <span>
+                  {node.title}
+                  {node.completedAt !== null ? <small>Completed</small> : null}
+                </span>
                 <ZeroMetrics compact />
               </button>
-              <button
-                className="add-child-button"
-                type="button"
-                aria-label={`Add child to ${node.title}`}
-                onClick={() => onAddChild(node.id)}
-              >
-                <span aria-hidden="true">+</span>
-              </button>
-            </div>
-            {creatingChildFor === node.id ? (
-              <div
-                className="tree-child-create"
-                style={{ "--node-depth": Math.min(depth + 1, 12) } as CSSProperties}
-              >
-                <NodeCreateForm
-                  parentId={node.id}
-                  parentTitle={node.title}
-                  onCreated={onCreated}
-                  onCancel={onCancelCreate}
-                />
-              </div>
-            ) : null}
-          </>
-        );
-      }}
-    />
+              {node.completedAt === null ? (
+                <button
+                  className="add-child-button icon-button"
+                  type="button"
+                  aria-label={`Add child to ${node.title}`}
+                  data-tooltip={`Add child to ${node.title}`}
+                  onClick={() => onAddChild(node.id)}
+                >
+                  <PlusIcon />
+                </button>
+              ) : (
+                <span className="add-child-button" aria-hidden="true" />
+              )}
+              </TreeRowDragContainer>
+              {creatingChildFor === node.id ? (
+                <div
+                  className="tree-child-create"
+                  style={{ "--node-depth": Math.min(depth + 1, 12) } as CSSProperties}
+                >
+                  <NodeCreateForm
+                    parentId={node.id}
+                    parentTitle={node.title}
+                    onCreated={onCreated}
+                    onCancel={onCancelCreate}
+                  />
+                </div>
+              ) : null}
+            </>
+          );
+        }}
+      />
+      <DragOverlay zIndex={50} dropAnimation={{ duration: 180, easing: "ease-out" }}>
+        {activeNode ? (
+          <div className="node-drag-overlay">
+            <GripIcon />
+            <strong>{activeNode.title}</strong>
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
 
@@ -534,14 +760,43 @@ export function DashboardShell({
   const [creatingRoot, setCreatingRoot] = useState(false);
   const [creatingTreeChildFor, setCreatingTreeChildFor] = useState<string | null>(null);
   const [creatingDetailChild, setCreatingDetailChild] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [lifecyclePending, setLifecyclePending] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [dragPending, setDragPending] = useState(false);
+  const [dragError, setDragError] = useState<string | null>(null);
   const detailFocusRef = useRef<HTMLDivElement>(null);
   const nodeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocus = useRef<"detail" | "tree" | null>(null);
+  const pendingScrollNodeId = useRef<string | null>(null);
+  const focusTreeAfterDelete = useRef(false);
   const treeFocusNodeId = useRef<string | null>(null);
+  const treeHeadingRef = useRef<HTMLHeadingElement>(null);
+  const moveTriggerRef = useRef<HTMLButtonElement>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
   const rootNodes = useMemo(
     () => orderedNodes.filter((node) => node.parentId === null),
     [orderedNodes],
   );
+  const visibleRoots = useMemo(
+    () => filterCompletedTree(rootNodes, showCompleted),
+    [rootNodes, showCompleted],
+  );
+  const searchResults = useMemo(
+    () => searchNodes(orderedNodes, searchText),
+    [orderedNodes, searchText],
+  );
+  const expandForDrag = useCallback((nodeId: string) => {
+    setExpanded((current) => {
+      if (current.has(nodeId)) {
+        return current;
+      }
+      return new Set(current).add(nodeId);
+    });
+  }, []);
 
   useEffect(() => {
     if (!window.matchMedia("(max-width: 760px)").matches) {
@@ -553,13 +808,41 @@ export function DashboardShell({
       if (pendingFocus.current === "detail" && selectedNode) {
         detailFocusRef.current?.focus();
       } else if (pendingFocus.current === "tree" && !selectedNode && treeFocusNodeId.current) {
-        nodeButtonRefs.current.get(treeFocusNodeId.current)?.focus();
+        const treeButton = nodeButtonRefs.current.get(treeFocusNodeId.current);
+        if (treeButton) {
+          treeButton.focus();
+        } else {
+          treeHeadingRef.current?.focus();
+        }
       }
       pendingFocus.current = null;
     });
 
     return () => window.cancelAnimationFrame(frame);
   }, [selectedNode]);
+
+  useEffect(() => {
+    if (!focusTreeAfterDelete.current || selectedNode) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      treeHeadingRef.current?.focus();
+      focusTreeAfterDelete.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedNode]);
+
+  useEffect(() => {
+    const nodeId = pendingScrollNodeId.current;
+    if (!nodeId) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      nodeButtonRefs.current.get(nodeId)?.scrollIntoView({ block: "center" });
+      pendingScrollNodeId.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [expanded, searchText, showCompleted]);
 
   function navigateToNode(nodeId?: string) {
     setCreatingTreeChildFor(null);
@@ -643,6 +926,98 @@ export function DashboardShell({
     });
   }
 
+  function chooseSearchResult(node: DashboardNode) {
+    if (node.completedAt !== null) {
+      setShowCompleted(true);
+    }
+    setSearchText("");
+    pendingScrollNodeId.current = node.id;
+    navigateToNode(node.id);
+  }
+
+  async function changeCompletion() {
+    if (!selectedNode || lifecyclePending) {
+      return;
+    }
+    setLifecyclePending(true);
+    setLifecycleError(null);
+    try {
+      const result =
+        selectedNode.completedAt === null
+          ? await completeNode({ id: selectedNode.id })
+          : await reopenNode({ id: selectedNode.id });
+      if (!result.ok) {
+        const blockers = (result.blockingNodeIds ?? [])
+          .map((nodeId) => nodeById.get(nodeId))
+          .filter((node): node is DashboardNode => Boolean(node))
+          .map(formatBreadcrumb)
+          .sort((left, right) => left.localeCompare(right));
+        setLifecycleError(
+          blockers.length > 0
+            ? `${result.message} Running: ${blockers.join("; ")}.`
+            : result.message,
+        );
+        return;
+      }
+      if (selectedNode.completedAt === null) {
+        setShowCompleted(true);
+      }
+      router.refresh();
+    } finally {
+      setLifecyclePending(false);
+    }
+  }
+
+  function expandMoveDestination(parentId: string | null) {
+    if (parentId !== null) {
+      const parent = nodeById.get(parentId);
+      setExpanded((current) => {
+        const next = new Set(current).add(parentId);
+        for (const ancestor of parent?.breadcrumb ?? []) {
+          next.add(ancestor.id);
+        }
+        return next;
+      });
+    }
+  }
+
+  function moved(parentId: string | null) {
+    setMoveDialogOpen(false);
+    expandMoveDestination(parentId);
+    router.refresh();
+  }
+
+  async function dropped(sourceId: string, destination: NodeDropDestination) {
+    if (dragPending) {
+      return;
+    }
+    setDragPending(true);
+    setDragError(null);
+    try {
+      const result = await moveNode({
+        id: sourceId,
+        parentId: destination.parentId,
+        position: destination.position,
+      });
+      if (!result.ok) {
+        setDragError(result.message);
+        return;
+      }
+      expandMoveDestination(destination.parentId);
+      router.refresh();
+    } finally {
+      setDragPending(false);
+    }
+  }
+
+  function deleted() {
+    setDeleteDialogOpen(false);
+    setLifecycleError(null);
+    focusTreeAfterDelete.current = true;
+    navigateToNode();
+    router.refresh();
+  }
+
   return (
     <main
       className={selectedNode ? "dashboard dashboard--selected" : "dashboard"}
@@ -661,12 +1036,57 @@ export function DashboardShell({
       </header>
 
       <div className="dashboard-toolbar" aria-label="Tree tools">
-        <div>
+        <div className="toolbar-count">
           <p className="eyebrow">{nodes.length === 1 ? "1 node" : `${nodes.length} nodes`}</p>
         </div>
-        <button className="button button--primary" type="button" onClick={() => setCreatingRoot(true)}>
-          New root node
-        </button>
+        <div className="tree-search">
+          <SearchIcon className="search-icon" />
+          <label>
+            <span className="sr-only">Search node titles</span>
+            <input
+              type="search"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Search nodes"
+              aria-controls={searchText.trim() ? "tree-search-results" : undefined}
+            />
+          </label>
+          {searchText.trim() ? (
+            <div id="tree-search-results" className="search-results" aria-label="Search results">
+              {searchResults.map((node) => (
+                <button type="button" key={node.id} onClick={() => chooseSearchResult(node)}>
+                  <strong>{node.title}</strong>
+                  <span>
+                    {formatBreadcrumb(node)}
+                    {node.completedAt !== null ? " · Completed" : ""}
+                  </span>
+                </button>
+              ))}
+              {searchResults.length === 0 ? <p>No matching nodes.</p> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="toolbar-actions">
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Show completed"
+            aria-pressed={showCompleted}
+            data-tooltip={showCompleted ? "Hide completed" : "Show completed"}
+            onClick={() => setShowCompleted((current) => !current)}
+          >
+            {showCompleted ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+          <button
+            className="icon-button icon-button--primary"
+            type="button"
+            aria-label="New root node"
+            data-tooltip="New root node"
+            onClick={() => setCreatingRoot(true)}
+          >
+            <PlusIcon />
+          </button>
+        </div>
       </div>
 
       {creatingRoot ? (
@@ -678,9 +1098,12 @@ export function DashboardShell({
       <div className="dashboard-main">
         <section className="tree-pane" aria-labelledby="tree-heading">
           <div className="pane-heading">
-            <h1 id="tree-heading">Node tree</h1>
+            <h1 ref={treeHeadingRef} id="tree-heading" tabIndex={-1}>Node tree</h1>
             <p>Organize work at any depth.</p>
           </div>
+
+          {dragPending ? <p className="tree-move-status" role="status">Moving node…</p> : null}
+          {dragError ? <p className="tree-move-error" role="alert">{dragError}</p> : null}
 
           {orderedNodes.length === 0 ? (
             <div className="tree-empty">
@@ -689,10 +1112,18 @@ export function DashboardShell({
                 Create your first root node
               </button>
             </div>
+          ) : visibleRoots.length === 0 ? (
+            <div className="tree-empty">
+              <p>No active nodes.</p>
+              <button className="text-action" type="button" onClick={() => setShowCompleted(true)}>
+                Show completed nodes
+              </button>
+            </div>
           ) : (
             <div className="node-tree" aria-label="Work nodes">
               <NodeTree
-                roots={rootNodes}
+                allNodes={orderedNodes}
+                roots={visibleRoots}
                 selectedNodeId={selectedNode?.id}
                 expanded={expanded}
                 creatingChildFor={creatingTreeChildFor}
@@ -701,7 +1132,11 @@ export function DashboardShell({
                 onAddChild={setCreatingTreeChildFor}
                 onCreated={created}
                 onCancelCreate={() => setCreatingTreeChildFor(null)}
+                onDragStarted={() => setDragError(null)}
+                onDrop={(sourceId, destination) => void dropped(sourceId, destination)}
+                onExpandForDrag={expandForDrag}
                 registerNodeButton={registerNodeButton}
+                dragPending={dragPending}
               />
             </div>
           )}
@@ -738,29 +1173,77 @@ export function DashboardShell({
                 </ol>
               </nav>
               <TitleEditor node={selectedNode} onSaved={mutationSaved} />
+              <div className="node-status-line">
+                <span className={selectedNode.completedAt === null ? "status-pill" : "status-pill status-pill--completed"}>
+                  {selectedNode.completedAt === null ? "Active" : "Completed"}
+                </span>
+              </div>
               <ZeroMetrics />
               <div className="detail-fields">
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />
               </div>
-              <div className="detail-child">
-                {creatingDetailChild ? (
+              {selectedNode.completedAt === null ? (
+                <div className="detail-child">
+                  {creatingDetailChild ? (
                   <NodeCreateForm
                     parentId={selectedNode.id}
                     parentTitle={selectedNode.title}
                     onCreated={created}
                     onCancel={() => setCreatingDetailChild(false)}
                   />
-                ) : (
+                  ) : (
                   <button
-                    className="button button--quiet"
+                    className="icon-button"
                     type="button"
+                    aria-label="Add child node"
+                    data-tooltip="Add child node"
                     onClick={() => setCreatingDetailChild(true)}
                   >
-                    Add child node
+                    <PlusIcon />
                   </button>
-                )}
+                  )}
+                </div>
+              ) : null}
+              <div className="node-actions" aria-label="Node actions">
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label={
+                    lifecyclePending
+                      ? "Saving node status"
+                      : selectedNode.completedAt === null
+                        ? "Complete node"
+                        : "Reopen node"
+                  }
+                  data-tooltip={selectedNode.completedAt === null ? "Complete node" : "Reopen node"}
+                  disabled={lifecyclePending}
+                  onClick={() => void changeCompletion()}
+                >
+                  {selectedNode.completedAt === null ? <CheckIcon /> : <ReopenIcon />}
+                </button>
+                <button
+                  ref={moveTriggerRef}
+                  className="icon-button"
+                  type="button"
+                  aria-label="Move To…"
+                  data-tooltip="Move To…"
+                  onClick={() => setMoveDialogOpen(true)}
+                >
+                  <MoveIcon />
+                </button>
+                <button
+                  ref={deleteTriggerRef}
+                  className="icon-button icon-button--danger"
+                  type="button"
+                  aria-label="Delete node"
+                  data-tooltip="Delete node"
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  <TrashIcon />
+                </button>
               </div>
+              {lifecycleError ? <p className="detail-error" role="alert">{lifecycleError}</p> : null}
             </div>
           ) : (
             <div className="detail-empty">
@@ -771,6 +1254,23 @@ export function DashboardShell({
           )}
         </section>
       </div>
+      {selectedNode && moveDialogOpen ? (
+        <MoveNodeDialog
+          node={selectedNode}
+          nodes={orderedNodes}
+          onClose={() => setMoveDialogOpen(false)}
+          onMoved={moved}
+          returnFocusRef={moveTriggerRef}
+        />
+      ) : null}
+      {selectedNode && deleteDialogOpen ? (
+        <ConfirmDeleteDialog
+          node={selectedNode}
+          onClose={() => setDeleteDialogOpen(false)}
+          onDeleted={deleted}
+          returnFocusRef={deleteTriggerRef}
+        />
+      ) : null}
     </main>
   );
 }
