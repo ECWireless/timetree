@@ -5,20 +5,30 @@ import { AuthorizationError } from "@/lib/auth/policy";
 import { getDashboardData } from "@/lib/server/dashboard";
 import { getNodeEntries } from "@/lib/server/time-entries";
 import type { TimeEntryPage } from "@/lib/time-entries/contracts";
+import { resolveDashboardPeriodSearchParams } from "@/lib/time-entries/period";
 
 type HomeProps = {
-  searchParams: Promise<{ error?: string; node?: string }>;
+  searchParams: Promise<{
+    day?: string | string[];
+    error?: string | string[];
+    month?: string | string[];
+    node?: string | string[];
+    period?: string | string[];
+  }>;
 };
 
 export const dynamic = "force-dynamic";
 
 export default async function Home({ searchParams }: HomeProps) {
-  const { error, node } = await searchParams;
+  const params = await searchParams;
+  const error = typeof params.error === "string" ? params.error : undefined;
+  const node = typeof params.node === "string" ? params.node : undefined;
+  const periodUrl = resolveDashboardPeriodSearchParams(params);
   let dashboard: Awaited<ReturnType<typeof getDashboardData>> | null = null;
   let authorizationFailure: AuthorizationError | null = null;
 
   try {
-    dashboard = await getDashboardData();
+    dashboard = await getDashboardData(periodUrl.period);
   } catch (caught) {
     if (!(caught instanceof AuthorizationError)) {
       throw caught;
@@ -38,6 +48,8 @@ export default async function Home({ searchParams }: HomeProps) {
         initialEntryPage={initialEntryPage}
         nodes={dashboard.nodes}
         orderedNodes={dashboard.orderedNodes}
+        period={periodUrl.period}
+        periodRequiresCanonicalization={periodUrl.requiresCanonicalization}
         selectedNodeId={node}
       />
     );

@@ -283,11 +283,13 @@ input {
 }
 
 input[type="date"],
+input[type="month"],
 input[type="datetime-local"] {
   color-scheme: dark;
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
 }
@@ -358,7 +360,7 @@ textarea {
   display: grid;
   min-height: 5.5rem;
   align-items: center;
-  grid-template-columns: auto minmax(16rem, 40rem) auto;
+  grid-template-columns: auto minmax(8rem, 40rem) auto auto;
   justify-content: start;
   gap: 1rem;
   border-bottom: 1px solid rgb(154 166 178 / 18%);
@@ -454,6 +456,45 @@ textarea {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+}
+
+.period-filter {
+  display: flex;
+  min-width: 0;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.period-filter__mode {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.period-filter__mode > span {
+  color: var(--color-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.period-filter__mode select {
+  width: 7.25rem;
+}
+
+.period-filter__value {
+  min-width: 0;
+}
+
+.period-filter__value input {
+  width: 9.5rem;
+  font-size: 0.75rem;
+}
+
+.period-filter [aria-disabled="true"] {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .dashboard-toolbar .eyebrow {
@@ -1699,17 +1740,31 @@ textarea {
     grid-row: 1;
   }
 
+  .period-filter {
+    width: 100%;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .period-filter__value {
+    flex: 1;
+  }
+
+  .period-filter__value input {
+    width: 100%;
+  }
+
   .dashboard-toolbar .button {
     min-height: 2.5rem;
   }
 
   .dashboard-main {
     display: block;
-    min-height: calc(100vh - 8.5rem);
+    min-height: calc(100vh - 11.75rem);
   }
 
   .tree-pane {
-    min-height: calc(100vh - 8.5rem);
+    min-height: calc(100vh - 11.75rem);
     border-right: 0;
   }
 

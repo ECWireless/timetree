@@ -1,7 +1,20 @@
+import { toLocalWorkDate } from "./dates";
+
 export type DashboardPeriodInput =
   | { mode: "all" }
   | { mode: "day"; day: string }
   | { mode: "month"; month: string };
+
+export type DashboardPeriodSearchParams = {
+  day?: string | string[];
+  month?: string | string[];
+  period?: string | string[];
+};
+
+export type DashboardPeriodUrlResolution = {
+  period: DashboardPeriodInput;
+  requiresCanonicalization: boolean;
+};
 
 export type DashboardPeriod =
   | { mode: "all"; startDate: null; endDateExclusive: null }
@@ -23,6 +36,20 @@ export class DashboardPeriodError extends Error {
     super("Dashboard period is invalid.");
     this.name = "DashboardPeriodError";
   }
+}
+
+export function defaultDashboardPeriod(
+  mode: DashboardPeriodInput["mode"],
+  now = new Date(),
+): DashboardPeriodInput {
+  if (mode === "all") {
+    return { mode: "all" };
+  }
+
+  const localDay = toLocalWorkDate(now);
+  return mode === "day"
+    ? { mode: "day", day: localDay }
+    : { mode: "month", month: localDay.slice(0, 7) };
 }
 
 function formatYear(year: number) {
@@ -129,4 +156,44 @@ export function resolveDashboardPeriod(input: unknown): DashboardPeriod {
   }
 
   throw new DashboardPeriodError();
+}
+
+export function resolveDashboardPeriodSearchParams(
+  params: DashboardPeriodSearchParams,
+): DashboardPeriodUrlResolution {
+  if (params.period === undefined && params.day === undefined && params.month === undefined) {
+    return { period: { mode: "all" }, requiresCanonicalization: false };
+  }
+
+  if (params.period === "day" && typeof params.day === "string") {
+    const period: DashboardPeriodInput = { mode: "day", day: params.day };
+    try {
+      resolveDashboardPeriod(period);
+      return {
+        period,
+        requiresCanonicalization: params.month !== undefined,
+      };
+    } catch (error) {
+      if (!(error instanceof DashboardPeriodError)) {
+        throw error;
+      }
+    }
+  }
+
+  if (params.period === "month" && typeof params.month === "string") {
+    const period: DashboardPeriodInput = { mode: "month", month: params.month };
+    try {
+      resolveDashboardPeriod(period);
+      return {
+        period,
+        requiresCanonicalization: params.day !== undefined,
+      };
+    } catch (error) {
+      if (!(error instanceof DashboardPeriodError)) {
+        throw error;
+      }
+    }
+  }
+
+  return { period: { mode: "all" }, requiresCanonicalization: true };
 }

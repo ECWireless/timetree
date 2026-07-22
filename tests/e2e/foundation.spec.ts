@@ -525,6 +525,208 @@ test("changes historical rollups when completed nodes are shown", async ({ conte
   }
 });
 
+test.describe("tree period filter", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("filters all tree metrics while preserving direct history and URL state", async ({
+    context,
+    isMobile,
+    page,
+  }) => {
+    const seeded = await seedSession(allowedEmail, true);
+
+    try {
+      const rootId = await insertNode(seeded.userId, "Period root", 0);
+      const childId = await insertNode(seeded.userId, "Period child", 0, rootId);
+      const completedId = await insertNode(
+        seeded.userId,
+        "Period completed",
+        1,
+        rootId,
+        true,
+      );
+      await pool.query(`update nodes set hourly_rate_cents = 10000 where id = $1`, [rootId]);
+      await pool.query(
+        `insert into time_entries
+           (user_id, node_id, work_date, started_at, ended_at, duration_seconds,
+            hourly_rate_cents, notes, created_at)
+         values
+           ($1, $2, '2026-07-22', null, null, 3600, 10000,
+            'Root July work', '2026-08-10T00:00:00Z'),
+           ($1, $3, '2026-07-22', null, null, 1800, 20000,
+            'Child July work', '2026-08-09T00:00:00Z'),
+           ($1, $4, '2026-07-22', null, null, 900, null,
+            'Completed July work', '2026-08-08T00:00:00Z'),
+           ($1, $3, '2026-07-31', '2026-07-31T23:55:00Z', '2026-08-01T00:05:00Z',
+            600, 30000, 'Cross-midnight July work', '2026-08-07T00:00:00Z'),
+           ($1, $3, '2026-08-01', null, null, 300, 40000,
+            'Child August work', '2026-08-06T00:00:00Z')`,
+        [seeded.userId, rootId, childId, completedId],
+      );
+      await pool.query(
+        `insert into time_entries
+           (user_id, node_id, work_date, duration_seconds, hourly_rate_cents, notes, created_at)
+         select
+           $1,
+           $2,
+           '2026-06-15',
+           60,
+           10000,
+           'June history ' || series,
+           '2026-06-01T00:00:00Z'::timestamptz + series * interval '1 second'
+         from generate_series(1, 50) as series`,
+        [seeded.userId, rootId],
+      );
+      await context.addCookies([
+        {
+          name: "better-auth.session_token",
+          value: seeded.cookie,
+          domain: "127.0.0.1",
+          path: "/",
+          httpOnly: true,
+          sameSite: "Lax",
+        },
+      ]);
+      await page.clock.setFixedTime(new Date("2026-08-01T00:30:00.000Z"));
+      await page.goto(`/?node=${rootId}&period=day`);
+
+      await expect(page).toHaveURL(`/?node=${rootId}`);
+      const rangeSelect = page.getByLabel("Time range");
+      const rootButton = page.locator(".node-select").filter({ hasText: "Period root" }).first();
+      const compactMetrics = rootButton.locator(".node-metrics");
+      const detailMetrics = page.locator(".detail-content > .node-metrics");
+      const entryRows = page.locator(".entry-row");
+      await expect(rangeSelect).toHaveValue("all");
+      await expect(entryRows).toHaveCount(50);
+      await expect(page.getByRole("button", { name: "Load older entries" })).toBeVisible();
+
+      await rangeSelect.focus();
+      await rangeSelect.selectOption("day");
+      await expect(page).toHaveURL(`/?node=${rootId}&period=day&day=2026-07-31`);
+      await expect(rangeSelect).toBeFocused();
+      const dayInput = page.getByLabel("Filter day");
+      await expect(dayInput).toHaveValue("2026-07-31");
+      if (!isMobile) {
+        await page.setViewportSize({ width: 800, height: 900 });
+        await expect(page.getByRole("group", { name: "Historical period" })).toBeVisible();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          ),
+        ).toBe(false);
+        await page.setViewportSize({ width: 1280, height: 720 });
+      }
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 10m rolled up, $50.00 historical value",
+      );
+      await expect(detailMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 10m rolled up, 0h direct, $50.00 historical value",
+      );
+      await expect(page.getByText("June history 50", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Load older entries" })).toBeVisible();
+
+      await rangeSelect.selectOption("month");
+      await expect(page).toHaveURL(`/?node=${rootId}&period=month&month=2026-07`);
+      const monthInput = page.getByLabel("Filter month");
+      await expect(monthInput).toHaveValue("2026-07");
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 1h 40m rolled up, $250.00 historical value",
+      );
+      await page.getByRole("button", { name: "Show completed" }).click();
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 1h 55m rolled up, $250.00 historical value, contains entries with hourly rates and entries without hourly rates",
+      );
+      await page.getByRole("button", { name: "Show completed" }).click();
+
+      await monthInput.fill("2026-08");
+      await expect(page).toHaveURL(`/?node=${rootId}&period=month&month=2026-08`);
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 5m rolled up, $33.33 historical value",
+      );
+      await page.goBack();
+      await expect(page).toHaveURL(`/?node=${rootId}&period=month&month=2026-07`);
+      await expect(monthInput).toHaveValue("2026-07");
+
+      await rangeSelect.selectOption("day");
+      await expect(page).toHaveURL(`/?node=${rootId}&period=day&day=2026-07-31`);
+      await dayInput.fill("2026-07-23");
+      await expect(page).toHaveURL(`/?node=${rootId}&period=day&day=2026-07-23`);
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 0h rolled up, $0.00 historical value",
+      );
+      await page.goBack();
+      await expect(page).toHaveURL(`/?node=${rootId}&period=day&day=2026-07-31`);
+      if (isMobile) {
+        await page.getByRole("button", { name: "Back to tree" }).click();
+        await expect(page).toHaveURL(`/?period=day&day=2026-07-31`);
+      }
+      await expect(rootButton).toBeVisible();
+      await page.getByRole("button", { name: "Expand Period root" }).click();
+      await expect(page.getByRole("button", { name: "Period child", exact: true })).toBeVisible();
+      if (isMobile) {
+        await rootButton.click();
+        await expect(page).toHaveURL(`/?period=day&day=2026-07-31&node=${rootId}`);
+      }
+
+      const filteredRootUrl = isMobile
+        ? `/?period=day&day=2026-07-31&node=${rootId}`
+        : `/?node=${rootId}&period=day&day=2026-07-31`;
+      const filteredChildUrl = isMobile
+        ? `/?period=day&day=2026-07-31&node=${childId}`
+        : `/?node=${childId}&period=day&day=2026-07-31`;
+
+      await page.getByRole("button", { name: "Load older entries" }).click();
+      await expect(entryRows).toHaveCount(51);
+      await page.getByRole("button", { name: "Add time" }).click();
+      const entryForm = page.locator(".time-entry-form");
+      await entryForm.getByLabel("Work date").fill("2026-07-31");
+      await entryForm.locator('input[placeholder="1h 30m"]').fill("30m");
+      await entryForm.getByLabel(/Notes/).fill("Added in filtered day");
+      await entryForm.getByRole("button", { name: "Add entry" }).click();
+      await expect(page).toHaveURL(filteredRootUrl);
+      await expect(entryRows).toHaveCount(52);
+      await expect(page.getByText("Added in filtered day", { exact: true })).toBeVisible();
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 40m rolled up, $100.00 historical value",
+      );
+      await expect(detailMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 40m rolled up, 30m direct, $100.00 historical value",
+      );
+
+      await page.getByPlaceholder("Search nodes").fill("Period child");
+      await page.locator(".search-results button").filter({ hasText: "Period child" }).click();
+      await expect(page).toHaveURL(filteredChildUrl);
+      await page.goBack();
+      await expect(page).toHaveURL(filteredRootUrl);
+      await expect(rangeSelect).toHaveValue("day");
+      await rangeSelect.selectOption("all");
+      await expect(page).toHaveURL(`/?node=${rootId}`);
+      await expect(compactMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 3h 5m rolled up, $416.67 historical value",
+      );
+      await expect(page.getByRole("button", { name: "Load older entries" })).toBeVisible();
+      await page.getByRole("button", { name: "Load older entries" }).click();
+      await expect(entryRows).toHaveCount(52);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        ),
+      ).toBe(false);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+});
+
 test("keeps deep inline child creation within a narrow desktop pane", async ({
   context,
   page,
