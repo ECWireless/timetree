@@ -153,7 +153,18 @@ Status: Complete
 
 ## Phase 5 — Manual time ledger and rates
 
-### Build
+Phase 5 is delivered as three sequential PR-sized units. Before beginning each
+unit, debrief its goal, non-goals, user-visible outcome, technical approach,
+dependencies, sequential tasks, acceptance criteria, verification, commit and
+PR boundary, and independent-review strategy with the user, then obtain explicit
+approval. Complete the full verification, review, QA, and commit gates for one
+unit before beginning the next.
+
+### PR 5.1 — Manual ledger foundation
+
+Status: In progress
+
+#### Build
 
 - Implement compact duration parsing and formatting as pure functions.
 - Add duration-only and exact-range manual entry forms with local-date handling,
@@ -165,8 +176,41 @@ Status: Complete
   rate.
 - Load the selected node's 50 newest direct entries and append older pages with
   a stable cursor.
+- Display historical-entry durations and values according to the spec.
+
+#### Verify
+
+- Unit tests cover accepted and rejected duration strings, time formatting,
+  inheritance including explicit zero, and exact value math.
+- Integration tests cover manual entry correction, deletion, rate snapshots,
+  pagination, and reassignment without silent rate recalculation.
+- Manual historical entry remains available on a completed node.
+
+### PR 5.2 — Dashboard aggregates
+
+Status: Not started
+
+#### Build
+
 - Query direct entry aggregates once, then calculate descendant hours, priced
   value, and unpriced-time flags in application code.
+- Display direct and rolled-up durations, historical value, and unpriced-time
+  indicators according to the spec.
+
+#### Verify
+
+- Unit tests cover exact value math and tree rollups without double-counting.
+- Integration tests cover priced and unpriced direct aggregates and owner
+  boundaries.
+- Moving a subtree changes ancestor rollups without modifying any historical
+  entry.
+
+### PR 5.3 — Monthly summary
+
+Status: Not started
+
+#### Build
+
 - Add and migrate a reviewed composite owner/node/work-date index for monthly
   subtree reads.
 - Implement an owner-scoped monthly-summary read that validates `YYYY-MM`, uses
@@ -176,22 +220,16 @@ Status: Complete
   previous/next controls, a native month selector, `?month=YYYY-MM` navigation,
   headline hours and value, unpriced time, and a minimal contributing-node
   breakdown in current tree order.
-- Display all durations and values according to the spec.
+- Display monthly durations and values according to the spec.
 
-### Verify
+#### Verify
 
-- Unit tests cover accepted and rejected duration strings, time formatting,
-  inheritance including explicit zero, exact value math, tree rollups, calendar
-  month boundaries, and exact reconciliation of direct-contribution seconds,
-  unpriced seconds, and pre-rounding values without double-counting.
-- Integration tests cover manual entry correction, deletion, rate snapshots,
-  pagination, reassignment without silent rate recalculation, monthly ownership
-  boundaries, empty months, completed descendants, unpriced time, and
-  work-date-based month assignment. A database-seeded active timer remains
-  excluded from the monthly read.
-- Moving a subtree changes ancestor rollups without modifying any historical
-  entry.
-- Manual historical entry remains available on a completed node.
+- Unit tests cover calendar month boundaries and exact reconciliation of
+  direct-contribution seconds, unpriced seconds, and pre-rounding values without
+  double-counting.
+- Integration tests cover monthly ownership boundaries, empty months, completed
+  descendants, unpriced time, and work-date-based month assignment. A
+  database-seeded active timer remains excluded from the monthly read.
 - With a controlled browser timezone and date, an absent `?month` selects the
   browser's local current month. At desktop and mobile widths, changing the
   month updates the selected node's summary and URL, browser Back restores the
