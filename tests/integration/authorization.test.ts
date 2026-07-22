@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { makeSignature } from "better-auth/crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 
 import { AuthorizationError } from "../../src/lib/auth/policy";
@@ -48,11 +48,11 @@ async function seedSession(email: string, emailVerified: boolean) {
 
 describe("Better Auth single-account boundary", () => {
   beforeAll(async () => {
-    process.env.BETTER_AUTH_SECRET = authSecret;
-    process.env.BETTER_AUTH_URL = "http://localhost:3000";
-    process.env.GOOGLE_CLIENT_ID = "synthetic-google-client-id";
-    process.env.GOOGLE_CLIENT_SECRET = "synthetic-google-client-secret";
-    process.env.ALLOWED_EMAIL = allowedEmail;
+    vi.stubEnv("BETTER_AUTH_SECRET", authSecret);
+    vi.stubEnv("BETTER_AUTH_URL", "http://localhost:3000");
+    vi.stubEnv("GOOGLE_CLIENT_ID", "synthetic-google-client-id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "synthetic-google-client-secret");
+    vi.stubEnv("ALLOWED_EMAIL", allowedEmail);
 
     ({ auth } = await import("../../src/lib/server/auth"));
     ({ requireAuthorizedSession } = await import("../../src/lib/server/authorization"));
@@ -68,7 +68,11 @@ describe("Better Auth single-account boundary", () => {
   });
 
   afterAll(async () => {
-    await pool.end();
+    try {
+      await pool.end();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("accepts a real validated Better Auth session for the allowed account", async () => {

@@ -53,11 +53,11 @@ async function seedAuthorizedSession() {
 
 describe("node Server Actions", () => {
   beforeAll(async () => {
-    process.env.BETTER_AUTH_SECRET = authSecret;
-    process.env.BETTER_AUTH_URL = "http://localhost:3000";
-    process.env.GOOGLE_CLIENT_ID = "synthetic-google-client-id";
-    process.env.GOOGLE_CLIENT_SECRET = "synthetic-google-client-secret";
-    process.env.ALLOWED_EMAIL = allowedEmail;
+    vi.stubEnv("BETTER_AUTH_SECRET", authSecret);
+    vi.stubEnv("BETTER_AUTH_URL", "http://localhost:3000");
+    vi.stubEnv("GOOGLE_CLIENT_ID", "synthetic-google-client-id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "synthetic-google-client-secret");
+    vi.stubEnv("ALLOWED_EMAIL", allowedEmail);
 
     ({ createNode, updateNode } = await import("../../src/app/actions/nodes"));
   });
@@ -71,7 +71,11 @@ describe("node Server Actions", () => {
   });
 
   afterAll(async () => {
-    await pool.end();
+    try {
+      await pool.end();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("authorizes before returning validation details or mutating data", async () => {
