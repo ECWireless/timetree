@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNull, max, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { activeTimers, nodes, timeEntries, user } from "@/db/schema";
@@ -166,13 +166,56 @@ function isSiblingPositionConflict(error: unknown) {
 }
 
 export async function getDashboardDataForUser(userId: string) {
+  const directEntryAggregates = db
+    .select({
+      nodeId: timeEntries.nodeId,
+      durationSeconds: sql<string>`sum(${timeEntries.durationSeconds}::bigint)::text`.as(
+        "duration_seconds",
+      ),
+      pricedValueNumerator:
+        sql<string>`coalesce(sum(${timeEntries.durationSeconds}::numeric * ${timeEntries.hourlyRateCents}::numeric), 0)::text`.as(
+          "priced_value_numerator",
+        ),
+      hasUnpricedTime: sql<boolean>`bool_or(${timeEntries.hourlyRateCents} is null)`.as(
+        "has_unpriced_time",
+      ),
+      hasPricedTime: sql<boolean>`bool_or(${timeEntries.hourlyRateCents} is not null)`.as(
+        "has_priced_time",
+      ),
+    })
+    .from(timeEntries)
+    .where(eq(timeEntries.userId, userId))
+    .groupBy(timeEntries.nodeId)
+    .as("direct_entry_aggregates");
   const rows = await db
-    .select()
+    .select({
+      ...getTableColumns(nodes),
+      directDurationSeconds: directEntryAggregates.durationSeconds,
+      directPricedValueNumerator: directEntryAggregates.pricedValueNumerator,
+      hasDirectUnpricedTime: directEntryAggregates.hasUnpricedTime,
+      hasDirectPricedTime: directEntryAggregates.hasPricedTime,
+    })
     .from(nodes)
+    .leftJoin(directEntryAggregates, eq(nodes.id, directEntryAggregates.nodeId))
     .where(eq(nodes.userId, userId))
     .orderBy(asc(nodes.position), asc(nodes.id));
   const flatNodes = rows.map(toFlatNode);
-  const tree = assembleNodeTree(flatNodes);
+  const tree = assembleNodeTree(
+    flatNodes,
+    rows.flatMap((row) =>
+      row.directDurationSeconds === null
+        ? []
+        : [
+            {
+              nodeId: row.id,
+              durationSeconds: Number(row.directDurationSeconds),
+              pricedValueNumerator: row.directPricedValueNumerator ?? "0",
+              hasUnpricedTime: row.hasDirectUnpricedTime ?? false,
+              hasPricedTime: row.hasDirectPricedTime ?? false,
+            },
+          ],
+    ),
+  );
 
   return {
     nodes: flatNodes,

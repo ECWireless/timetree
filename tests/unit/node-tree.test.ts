@@ -53,6 +53,175 @@ describe("node tree assembly", () => {
     expect(tree.byId.get("deep")?.resolvedHourlyRateCents).toBe(0);
   });
 
+  it("excludes completed branches while retaining an exact inclusive rollup", () => {
+    const tree = assembleNodeTree(
+      [
+        node({ id: "root" }),
+        node({ id: "child", parentId: "root" }),
+        node({
+          id: "grandchild",
+          parentId: "child",
+          completedAt: "2026-07-20T12:00:00.000Z",
+        }),
+        node({
+          id: "great-grandchild",
+          parentId: "grandchild",
+          completedAt: "2026-07-20T12:00:00.000Z",
+        }),
+      ],
+      [
+        {
+          nodeId: "root",
+          durationSeconds: 3_600,
+          pricedValueNumerator: "36000000",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+        {
+          nodeId: "child",
+          durationSeconds: 1_800,
+          pricedValueNumerator: "36000000",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+        {
+          nodeId: "grandchild",
+          durationSeconds: 900,
+          pricedValueNumerator: "0",
+          hasUnpricedTime: true,
+          hasPricedTime: false,
+        },
+        {
+          nodeId: "great-grandchild",
+          durationSeconds: 600,
+          pricedValueNumerator: "18000000",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+      ],
+    );
+
+    expect(tree.byId.get("root")).toMatchObject({
+      directDurationSeconds: 3_600,
+      rolledUpDurationSeconds: 5_400,
+      rolledUpValueCents: "20000",
+      hasUnpricedTime: false,
+      hasPricedTime: true,
+      rolledUpDurationSecondsIncludingCompleted: 6_900,
+      rolledUpValueCentsIncludingCompleted: "25000",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: true,
+      completedDescendantCount: 2,
+    });
+    expect(tree.byId.get("child")).toMatchObject({
+      directDurationSeconds: 1_800,
+      rolledUpDurationSeconds: 1_800,
+      rolledUpValueCents: "10000",
+      hasUnpricedTime: false,
+      hasPricedTime: true,
+      rolledUpDurationSecondsIncludingCompleted: 3_300,
+      rolledUpValueCentsIncludingCompleted: "15000",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: true,
+      completedDescendantCount: 2,
+    });
+    expect(tree.byId.get("grandchild")).toMatchObject({
+      directDurationSeconds: 900,
+      rolledUpDurationSeconds: 900,
+      rolledUpValueCents: "0",
+      hasUnpricedTime: true,
+      hasPricedTime: false,
+      rolledUpDurationSecondsIncludingCompleted: 1_500,
+      rolledUpValueCentsIncludingCompleted: "5000",
+      hasUnpricedTimeIncludingCompleted: true,
+      hasPricedTimeIncludingCompleted: true,
+      completedDescendantCount: 1,
+    });
+    expect(tree.byId.get("great-grandchild")).toMatchObject({
+      directDurationSeconds: 600,
+      rolledUpDurationSeconds: 600,
+      rolledUpValueCents: "5000",
+      rolledUpDurationSecondsIncludingCompleted: 600,
+      rolledUpValueCentsIncludingCompleted: "5000",
+      completedDescendantCount: 0,
+    });
+  });
+
+  it("rounds a subtree value only after combining exact direct contributions", () => {
+    const tree = assembleNodeTree(
+      [node({ id: "root" }), node({ id: "child", parentId: "root" })],
+      [
+        {
+          nodeId: "root",
+          durationSeconds: 1,
+          pricedValueNumerator: "1800",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+        {
+          nodeId: "child",
+          durationSeconds: 1,
+          pricedValueNumerator: "1800",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+      ],
+    );
+
+    expect(tree.byId.get("root")?.rolledUpValueCents).toBe("1");
+    expect(tree.byId.get("root")?.rolledUpValueCentsIncludingCompleted).toBe("1");
+    expect(tree.byId.get("child")?.rolledUpValueCents).toBe("1");
+  });
+
+  it("rounds inclusive and completed-excluding values independently", () => {
+    const tree = assembleNodeTree(
+      [
+        node({ id: "root" }),
+        node({
+          id: "completed-child",
+          parentId: "root",
+          completedAt: "2026-07-20T12:00:00.000Z",
+        }),
+      ],
+      [
+        {
+          nodeId: "root",
+          durationSeconds: 1,
+          pricedValueNumerator: "1799",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+        {
+          nodeId: "completed-child",
+          durationSeconds: 1,
+          pricedValueNumerator: "1799",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+      ],
+    );
+
+    expect(tree.byId.get("root")?.rolledUpValueCents).toBe("0");
+    expect(tree.byId.get("root")?.rolledUpValueCentsIncludingCompleted).toBe("1");
+  });
+
+  it("preserves aggregate values beyond JavaScript's safe integer range", () => {
+    const tree = assembleNodeTree(
+      [node({ id: "root" })],
+      [
+        {
+          nodeId: "root",
+          durationSeconds: 1,
+          pricedValueNumerator: "3242591731706757123600",
+          hasUnpricedTime: false,
+          hasPricedTime: true,
+        },
+      ],
+    );
+
+    expect(tree.byId.get("root")?.rolledUpValueCents).toBe("900719925474099201");
+  });
+
   it("assembles a deeply nested valid tree without using the call stack", () => {
     const depth = 5_000;
     const nodes = Array.from({ length: depth }, (_, index) =>

@@ -11,6 +11,7 @@ import {
   formatRate,
   formatUsd,
   parseRateCents,
+  roundValueNumeratorToCents,
 } from "../../src/lib/time-entries/money";
 
 describe("duration parsing", () => {
@@ -130,10 +131,13 @@ describe("rate and exact value math", () => {
     expect(calculateRoundedValueCents(1, 1_800)).toBe(1);
     expect(calculateRoundedValueCents(3_599, 10_001)).toBe(9_998);
     expect(calculateRoundedValueCents(3_600, 10_001)).toBe(10_001);
+    expect(roundValueNumeratorToCents(BigInt(1_799))).toBe(BigInt(0));
+    expect(roundValueNumeratorToCents(BigInt(1_800))).toBe(BigInt(1));
   });
 
   it("formats USD values and hourly rates", () => {
     expect(formatUsd(12_550)).toBe("$125.50");
+    expect(formatUsd("900719925474099201")).toBe("$9,007,199,254,740,992.01");
     expect(formatRate(0)).toBe("$0.00/hr");
   });
 });

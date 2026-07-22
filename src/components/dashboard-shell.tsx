@@ -43,6 +43,7 @@ import {
   ReopenIcon,
   SearchIcon,
   TrashIcon,
+  WarningIcon,
 } from "@/components/icons";
 import { NodeTreeList } from "@/components/node-tree-list";
 import { TimeEntryLedger } from "@/components/time-entry-ledger";
@@ -56,7 +57,8 @@ import {
 } from "@/lib/nodes/presentation";
 import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
 import type { TimeEntryPage } from "@/lib/time-entries/contracts";
-import { formatRate, parseRateCents } from "@/lib/time-entries/money";
+import { formatHistoricalDuration } from "@/lib/time-entries/duration";
+import { formatRate, formatUsd, parseRateCents } from "@/lib/time-entries/money";
 
 type DashboardShellProps = {
   email: string;
@@ -70,19 +72,89 @@ function rateInputValue(cents: number | null) {
   return cents === null ? "" : (cents / 100).toFixed(2);
 }
 
-function ZeroMetrics({ compact = false }: { compact?: boolean }) {
+function nodeRollup(node: DashboardNode, includeCompleted: boolean) {
+  return includeCompleted
+    ? {
+        durationSeconds: node.rolledUpDurationSecondsIncludingCompleted,
+        valueCents: node.rolledUpValueCentsIncludingCompleted,
+        hasUnpricedTime: node.hasUnpricedTimeIncludingCompleted,
+        hasPricedTime: node.hasPricedTimeIncludingCompleted,
+      }
+    : {
+        durationSeconds: node.rolledUpDurationSeconds,
+        valueCents: node.rolledUpValueCents,
+        hasUnpricedTime: node.hasUnpricedTime,
+        hasPricedTime: node.hasPricedTime,
+      };
+}
+
+function nodeMetricsLabel(
+  node: DashboardNode,
+  includeDirect: boolean,
+  includeCompleted: boolean,
+) {
+  const rollup = nodeRollup(node, includeCompleted);
+  const hasMixedRates = rollup.hasPricedTime && rollup.hasUnpricedTime;
+  return [
+    `${formatHistoricalDuration(rollup.durationSeconds)} rolled up`,
+    includeDirect ? `${formatHistoricalDuration(node.directDurationSeconds)} direct` : null,
+    `${formatUsd(rollup.valueCents)} historical value`,
+    hasMixedRates
+      ? "contains entries with hourly rates and entries without hourly rates"
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function NodeMetrics({
+  node,
+  compact = false,
+  includeCompleted = false,
+  id,
+}: {
+  node: DashboardNode;
+  compact?: boolean;
+  includeCompleted?: boolean;
+  id?: string;
+}) {
+  const rollup = nodeRollup(node, includeCompleted);
+  const hasMixedRates = rollup.hasPricedTime && rollup.hasUnpricedTime;
   return (
-    <span className={compact ? "node-metrics node-metrics--compact" : "node-metrics"}>
-      <span>
-        <strong>0h</strong>
-        <small>rolled up</small>
+    <span
+      id={id}
+      className={[
+        "node-metrics",
+        compact ? "node-metrics--compact" : "",
+        hasMixedRates ? "node-metrics--mixed-rates" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-label={`Time totals: ${nodeMetricsLabel(node, !compact, includeCompleted)}`}
+    >
+      <span className={compact ? "node-metrics__rolled" : undefined}>
+        {compact && hasMixedRates ? (
+          <span
+            className="node-metrics__warning"
+            data-tooltip="This rollup includes entries with hourly rates and entries without hourly rates."
+            aria-hidden="true"
+          >
+            <WarningIcon />
+          </span>
+        ) : null}
+        <span className="node-metrics__copy">
+          <strong>{formatHistoricalDuration(rollup.durationSeconds)}</strong>
+          <small>rolled up</small>
+        </span>
       </span>
+      {!compact ? (
+        <span>
+          <strong>{formatHistoricalDuration(node.directDurationSeconds)}</strong>
+          <small>direct</small>
+        </span>
+      ) : null}
       <span>
-        <strong>0h</strong>
-        <small>direct</small>
-      </span>
-      <span>
-        <strong>$0.00</strong>
+        <strong>{formatUsd(rollup.valueCents)}</strong>
         <small>value</small>
       </span>
     </span>
@@ -457,10 +529,10 @@ function dropZoneForEvent(event: DragMoveEvent | DragEndEvent): NodeDropZone | n
 
   const activeCenter = activeRect.top + activeRect.height / 2;
   const relativePosition = (activeCenter - overRect.top) / overRect.height;
-  if (relativePosition < 0.28) {
+  if (relativePosition < 0.25) {
     return "before";
   }
-  if (relativePosition > 0.72) {
+  if (relativePosition > 0.65) {
     return "after";
   }
   return "inside";
@@ -475,6 +547,7 @@ function describeDrop(node: DashboardNode, zone: NodeDropZone) {
 
 function TreeRowDragContainer({
   children,
+  depthMarkerCount,
   disabled,
   dropIntent,
   expandPending,
@@ -483,6 +556,7 @@ function TreeRowDragContainer({
   style,
 }: {
   children: ReactNode;
+  depthMarkerCount: number;
   disabled: boolean;
   dropIntent: NodeDropDestination | null;
   expandPending: boolean;
@@ -518,6 +592,13 @@ function TreeRowDragContainer({
       data-drop-label={isDropTarget ? describeDrop(node, dropIntent.zone) : undefined}
       style={style}
     >
+      {depthMarkerCount > 0 ? (
+        <span className="node-depth-markers" aria-hidden="true">
+          {Array.from({ length: depthMarkerCount }, (_, index) => (
+            <span key={index} />
+          ))}
+        </span>
+      ) : null}
       <span
         ref={setActivatorNodeRef}
         className="node-drag-handle"
@@ -535,6 +616,7 @@ function TreeRowDragContainer({
 type NodeTreeProps = {
   allNodes: DashboardNode[];
   roots: DashboardNode[];
+  showCompleted: boolean;
   selectedNodeId?: string;
   expanded: Set<string>;
   creatingChildFor: string | null;
@@ -553,6 +635,7 @@ type NodeTreeProps = {
 function NodeTree({
   allNodes,
   roots,
+  showCompleted,
   selectedNodeId,
   expanded,
   creatingChildFor,
@@ -644,11 +727,15 @@ function NodeTree({
           const visualDepth = Math.min(depth, 12);
           const hasChildren = node.children.length > 0;
           const isExpanded = expanded.has(node.id);
+          const hiddenCompletedCount = showCompleted ? 0 : node.completedDescendantCount;
+          const metricsId = `node-metrics-${node.id}`;
+          const completedCountId = `node-completed-count-${node.id}`;
 
           return (
             <>
               <TreeRowDragContainer
                 node={node}
+                depthMarkerCount={visualDepth}
                 disabled={dragPending}
                 dropIntent={dropIntent}
                 expandPending={autoExpandCandidateId === node.id}
@@ -677,14 +764,27 @@ function NodeTree({
                 className="node-select"
                 type="button"
                 aria-label={node.completedAt === null ? node.title : `${node.title}, completed`}
+                aria-describedby={
+                  hiddenCompletedCount > 0 ? `${metricsId} ${completedCountId}` : metricsId
+                }
                 aria-current={node.id === selectedNodeId ? "page" : undefined}
                 onClick={() => onSelect(node.id)}
               >
                 <span>
                   {node.title}
                   {node.completedAt !== null ? <small>Completed</small> : null}
+                  {hiddenCompletedCount > 0 ? (
+                    <small id={completedCountId} className="node-completed-count">
+                      {hiddenCompletedCount} child {hiddenCompletedCount === 1 ? "node" : "nodes"} completed
+                    </small>
+                  ) : null}
                 </span>
-                <ZeroMetrics compact />
+                <NodeMetrics
+                  id={metricsId}
+                  node={node}
+                  compact
+                  includeCompleted={showCompleted}
+                />
               </button>
               {node.completedAt === null ? (
                 <button
@@ -1113,6 +1213,7 @@ export function DashboardShell({
               <NodeTree
                 allNodes={orderedNodes}
                 roots={visibleRoots}
+                showCompleted={showCompleted}
                 selectedNodeId={selectedNode?.id}
                 expanded={expanded}
                 creatingChildFor={creatingTreeChildFor}
@@ -1167,7 +1268,7 @@ export function DashboardShell({
                   {selectedNode.completedAt === null ? "Active" : "Completed"}
                 </span>
               </div>
-              <ZeroMetrics />
+              <NodeMetrics node={selectedNode} includeCompleted={showCompleted} />
               <div className="detail-fields">
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />

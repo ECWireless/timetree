@@ -445,6 +445,86 @@ test("builds and edits a URL-selected hierarchy", async ({ context, page, isMobi
   }
 });
 
+test("changes historical rollups when completed nodes are shown", async ({ context, page }) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const rootId = await insertNode(seeded.userId, "Rollup root", 0);
+    const activeChildId = await insertNode(seeded.userId, "Active work", 0, rootId);
+    const completedChildId = await insertNode(
+      seeded.userId,
+      "Completed work",
+      1,
+      rootId,
+      true,
+    );
+    const completedGrandchildId = await insertNode(
+      seeded.userId,
+      "Completed detail",
+      0,
+      completedChildId,
+      true,
+    );
+    await pool.query(
+      `insert into time_entries
+         (user_id, node_id, work_date, duration_seconds, hourly_rate_cents)
+       values
+         ($1, $2, '2026-07-22', 3600, 10000),
+         ($1, $3, '2026-07-22', 1800, 20000),
+         ($1, $4, '2026-07-22', 900, null),
+         ($1, $5, '2026-07-22', 600, 30000)`,
+      [seeded.userId, rootId, activeChildId, completedChildId, completedGrandchildId],
+    );
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+
+    const rootButton = page.getByRole("button", { name: "Rollup root", exact: true });
+    const compactMetrics = rootButton.locator(".node-metrics");
+    await expect(compactMetrics).toHaveAttribute(
+      "aria-label",
+      "Time totals: 1h 30m rolled up, $200.00 historical value",
+    );
+    await expect(compactMetrics.locator(".node-metrics__warning")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Completed work, completed", exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Show completed" }).click();
+    await expect(compactMetrics).toHaveAttribute(
+      "aria-label",
+      "Time totals: 1h 55m rolled up, $250.00 historical value, contains entries with hourly rates and entries without hourly rates",
+    );
+    await expect(compactMetrics.locator(".node-metrics__warning")).toHaveCount(1);
+    await page.getByRole("button", { name: "Expand Rollup root" }).click();
+    await expect(
+      page.getByRole("button", { name: "Completed work, completed", exact: true }),
+    ).toBeVisible();
+
+    await rootButton.click();
+    const detailMetrics = page.locator(".detail-content > .node-metrics");
+    await expect(detailMetrics).toHaveAttribute(
+      "aria-label",
+      "Time totals: 1h 55m rolled up, 1h direct, $250.00 historical value, contains entries with hourly rates and entries without hourly rates",
+    );
+    await page.getByRole("button", { name: "Show completed" }).click();
+    await expect(detailMetrics).toHaveAttribute(
+      "aria-label",
+      "Time totals: 1h 30m rolled up, 1h direct, $200.00 historical value",
+    );
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
 test("keeps deep inline child creation within a narrow desktop pane", async ({
   context,
   page,

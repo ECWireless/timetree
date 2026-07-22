@@ -188,12 +188,14 @@ Status: Complete
 
 ### PR 5.2 — Dashboard aggregates
 
-Status: Not started
+Status: Complete
 
 #### Build
 
 - Query direct entry aggregates once, then calculate descendant hours, priced
   value, and unpriced-time flags in application code.
+- Calculate exact rollups both with and without completed branches, and display
+  the variant selected by the "Show completed" control.
 - Display direct and rolled-up durations, historical value, and unpriced-time
   indicators according to the spec.
 
@@ -202,6 +204,8 @@ Status: Not started
 - Unit tests cover exact value math and tree rollups without double-counting.
 - Integration tests cover priced and unpriced direct aggregates and owner
   boundaries.
+- Browser tests cover excluding completed branches by default and including
+  them when completed nodes are shown.
 - Moving a subtree changes ancestor rollups without modifying any historical
   entry.
 
