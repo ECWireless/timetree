@@ -262,11 +262,13 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid rgb(154 166 178 / 35%);
@@ -278,6 +280,11 @@ textarea {
 input {
   min-height: 2.5rem;
   padding: 0.45rem 0.65rem;
+}
+
+select {
+  min-height: 2.5rem;
+  padding: 0.45rem 2rem 0.45rem 0.65rem;
 }
 
 textarea {
@@ -303,6 +310,10 @@ textarea {
   font-size: 0.8125rem;
   font-weight: 700;
   cursor: pointer;
+}
+
+.text-action--danger {
+  color: #ffaba5;
 }
 
 .dashboard {
@@ -992,6 +1003,223 @@ textarea {
   margin-top: 0.75rem;
 }
 
+.time-ledger {
+  border-top: 1px solid rgb(154 166 178 / 18%);
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+}
+
+.time-ledger__heading,
+.time-entry-form__heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.time-ledger__heading .eyebrow {
+  margin-bottom: 0.35rem !important;
+}
+
+.time-ledger__heading h2,
+.time-entry-form__heading h3 {
+  margin: 0;
+  letter-spacing: -0.025em;
+}
+
+.time-entry-form {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid rgb(154 166 178 / 24%);
+  border-radius: 0.65rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #080b0f;
+}
+
+.time-entry-form fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.time-entry-form legend {
+  margin-bottom: 0.4rem;
+  color: var(--color-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.segmented-control,
+.entry-rate-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.segmented-control legend,
+.entry-rate-options legend,
+.entry-rate-options .field-error {
+  flex-basis: 100%;
+}
+
+.segmented-control label,
+.entry-rate-options > label:not(.entry-rate-input) {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding-block: 0.4rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.segmented-control input[type="radio"],
+.entry-rate-options input[type="radio"] {
+  width: 1rem;
+  height: 1rem;
+  min-height: auto;
+  flex: 0 0 1rem;
+  padding: 0;
+  accent-color: var(--color-yellow);
+}
+
+.time-entry-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.time-entry-form__wide {
+  grid-column: 1 / -1;
+}
+
+.occurrence-field {
+  margin-top: 0.75rem;
+}
+
+.optional {
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.field-error {
+  display: block;
+  margin-top: 0.35rem;
+  color: #ffaba5;
+  font-size: 0.75rem;
+}
+
+.entry-rate-input {
+  width: min(10rem, 100%);
+}
+
+.entry-list {
+  display: grid;
+  gap: 0;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry-row {
+  border-top: 1px solid rgb(154 166 178 / 18%);
+  padding: 0.75rem 0;
+}
+
+.entry-row:last-child {
+  border-bottom: 1px solid rgb(154 166 178 / 18%);
+}
+
+.entry-row--editing {
+  padding-top: 0;
+}
+
+.entry-row__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.entry-row__summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.entry-row__summary strong {
+  font-size: 1.05rem;
+}
+
+.entry-row__summary span,
+.entry-row__summary time,
+.entry-row__range,
+.entry-row__rate {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.entry-row__range,
+.entry-row__notes,
+.entry-row__rate {
+  margin: 0.3rem 0 0;
+}
+
+.entry-row__notes {
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.entry-row__meta,
+.entry-row__actions {
+  display: flex;
+  align-items: center;
+}
+
+.entry-row__meta {
+  flex: none;
+  gap: 0.75rem;
+}
+
+.entry-row__actions {
+  gap: 0.15rem;
+}
+
+.entry-row__actions .icon-button {
+  border-color: transparent;
+  color: var(--color-muted);
+}
+
+.entry-row__actions .icon-button--danger {
+  color: #ffaba5;
+}
+
+.entry-row__actions .icon-button:last-child::after {
+  right: 0;
+  left: auto;
+  transform: translateY(-0.2rem);
+}
+
+.entry-row__actions .icon-button:last-child:hover::after,
+.entry-row__actions .icon-button:last-child:focus-visible::after {
+  transform: translateY(0);
+}
+
+.time-ledger__empty {
+  border-block: 1px solid rgb(154 166 178 / 18%);
+  margin: 1rem 0 0;
+  padding: 1.5rem 0;
+  color: var(--color-muted);
+}
+
+.load-entries {
+  margin-top: 1rem;
+}
+
 .detail-child {
   margin-top: 1.5rem;
 }
@@ -1414,6 +1642,24 @@ textarea {
 
   .node-metrics > span {
     padding-inline: 0.7rem;
+  }
+
+  .time-entry-form__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .time-entry-form__wide {
+    grid-column: auto;
+  }
+
+  .entry-row__summary {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .entry-row__meta {
+    justify-content: space-between;
   }
 }
 
