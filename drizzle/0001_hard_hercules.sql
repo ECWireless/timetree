@@ -1,0 +1,1 @@
+CREATE INDEX "time_entries_period_idx" ON "time_entries" USING btree ("user_id","work_date","node_id");

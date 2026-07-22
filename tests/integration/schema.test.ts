@@ -163,6 +163,20 @@ describe("initial PostgreSQL schema", () => {
     });
   });
 
+  it("indexes owner-scoped work-date period reads before node grouping", async () => {
+    const result = await client.query<{ definition: string | null; obsolete: string | null }>(
+      `select
+         pg_get_indexdef(to_regclass('public.time_entries_period_idx')) as definition,
+         to_regclass('public.time_entries_monthly_idx')::text as obsolete`,
+    );
+
+    expect(result.rows[0]).toEqual({
+      definition:
+        "CREATE INDEX time_entries_period_idx ON public.time_entries USING btree (user_id, work_date, node_id)",
+      obsolete: null,
+    });
+  });
+
   it("rejects non-positive historical durations", async () => {
     const userId = `user-${randomUUID()}`;
     await insertUser(userId);
