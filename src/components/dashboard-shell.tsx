@@ -11,10 +11,26 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { createNode, updateNode } from "@/app/actions/nodes";
+import { completeNode, createNode, reopenNode, updateNode } from "@/app/actions/nodes";
 import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
+import { ConfirmDeleteDialog, MoveNodeDialog } from "@/components/node-dialogs";
+import {
+  CheckIcon,
+  EyeIcon,
+  EyeOffIcon,
+  MoveIcon,
+  PlusIcon,
+  ReopenIcon,
+  SearchIcon,
+  TrashIcon,
+} from "@/components/icons";
 import { NodeTreeList } from "@/components/node-tree-list";
+import {
+  filterCompletedTree,
+  formatBreadcrumb,
+  searchNodes,
+} from "@/lib/nodes/presentation";
 import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
 
 type DashboardShellProps = {
@@ -459,7 +475,11 @@ function NodeTree({
         return (
           <>
             <div
-              className={node.id === selectedNodeId ? "node-row node-row--selected" : "node-row"}
+              className={[
+                "node-row",
+                node.id === selectedNodeId ? "node-row--selected" : "",
+                node.completedAt !== null ? "node-row--completed" : "",
+              ].filter(Boolean).join(" ")}
               style={{ "--node-depth": visualDepth } as CSSProperties}
             >
               {hasChildren ? (
@@ -479,21 +499,29 @@ function NodeTree({
                 ref={(element) => registerNodeButton(node.id, element)}
                 className="node-select"
                 type="button"
-                aria-label={node.title}
+                aria-label={node.completedAt === null ? node.title : `${node.title}, completed`}
                 aria-current={node.id === selectedNodeId ? "page" : undefined}
                 onClick={() => onSelect(node.id)}
               >
-                <span>{node.title}</span>
+                <span>
+                  {node.title}
+                  {node.completedAt !== null ? <small>Completed</small> : null}
+                </span>
                 <ZeroMetrics compact />
               </button>
-              <button
-                className="add-child-button"
-                type="button"
-                aria-label={`Add child to ${node.title}`}
-                onClick={() => onAddChild(node.id)}
-              >
-                <span aria-hidden="true">+</span>
-              </button>
+              {node.completedAt === null ? (
+                <button
+                  className="add-child-button icon-button"
+                  type="button"
+                  aria-label={`Add child to ${node.title}`}
+                  data-tooltip={`Add child to ${node.title}`}
+                  onClick={() => onAddChild(node.id)}
+                >
+                  <PlusIcon />
+                </button>
+              ) : (
+                <span className="add-child-button" aria-hidden="true" />
+              )}
             </div>
             {creatingChildFor === node.id ? (
               <div
@@ -534,13 +562,32 @@ export function DashboardShell({
   const [creatingRoot, setCreatingRoot] = useState(false);
   const [creatingTreeChildFor, setCreatingTreeChildFor] = useState<string | null>(null);
   const [creatingDetailChild, setCreatingDetailChild] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [lifecyclePending, setLifecyclePending] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const detailFocusRef = useRef<HTMLDivElement>(null);
   const nodeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocus = useRef<"detail" | "tree" | null>(null);
+  const pendingScrollNodeId = useRef<string | null>(null);
+  const focusTreeAfterDelete = useRef(false);
   const treeFocusNodeId = useRef<string | null>(null);
+  const treeHeadingRef = useRef<HTMLHeadingElement>(null);
+  const moveTriggerRef = useRef<HTMLButtonElement>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
   const rootNodes = useMemo(
     () => orderedNodes.filter((node) => node.parentId === null),
     [orderedNodes],
+  );
+  const visibleRoots = useMemo(
+    () => filterCompletedTree(rootNodes, showCompleted),
+    [rootNodes, showCompleted],
+  );
+  const searchResults = useMemo(
+    () => searchNodes(orderedNodes, searchText),
+    [orderedNodes, searchText],
   );
 
   useEffect(() => {
@@ -553,13 +600,41 @@ export function DashboardShell({
       if (pendingFocus.current === "detail" && selectedNode) {
         detailFocusRef.current?.focus();
       } else if (pendingFocus.current === "tree" && !selectedNode && treeFocusNodeId.current) {
-        nodeButtonRefs.current.get(treeFocusNodeId.current)?.focus();
+        const treeButton = nodeButtonRefs.current.get(treeFocusNodeId.current);
+        if (treeButton) {
+          treeButton.focus();
+        } else {
+          treeHeadingRef.current?.focus();
+        }
       }
       pendingFocus.current = null;
     });
 
     return () => window.cancelAnimationFrame(frame);
   }, [selectedNode]);
+
+  useEffect(() => {
+    if (!focusTreeAfterDelete.current || selectedNode) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      treeHeadingRef.current?.focus();
+      focusTreeAfterDelete.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedNode]);
+
+  useEffect(() => {
+    const nodeId = pendingScrollNodeId.current;
+    if (!nodeId) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      nodeButtonRefs.current.get(nodeId)?.scrollIntoView({ block: "center" });
+      pendingScrollNodeId.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [expanded, searchText, showCompleted]);
 
   function navigateToNode(nodeId?: string) {
     setCreatingTreeChildFor(null);
@@ -643,6 +718,71 @@ export function DashboardShell({
     });
   }
 
+  function chooseSearchResult(node: DashboardNode) {
+    if (node.completedAt !== null) {
+      setShowCompleted(true);
+    }
+    setSearchText("");
+    pendingScrollNodeId.current = node.id;
+    navigateToNode(node.id);
+  }
+
+  async function changeCompletion() {
+    if (!selectedNode || lifecyclePending) {
+      return;
+    }
+    setLifecyclePending(true);
+    setLifecycleError(null);
+    try {
+      const result =
+        selectedNode.completedAt === null
+          ? await completeNode({ id: selectedNode.id })
+          : await reopenNode({ id: selectedNode.id });
+      if (!result.ok) {
+        const blockers = (result.blockingNodeIds ?? [])
+          .map((nodeId) => nodeById.get(nodeId))
+          .filter((node): node is DashboardNode => Boolean(node))
+          .map(formatBreadcrumb)
+          .sort((left, right) => left.localeCompare(right));
+        setLifecycleError(
+          blockers.length > 0
+            ? `${result.message} Running: ${blockers.join("; ")}.`
+            : result.message,
+        );
+        return;
+      }
+      if (selectedNode.completedAt !== null) {
+        setShowCompleted(true);
+      }
+      router.refresh();
+    } finally {
+      setLifecyclePending(false);
+    }
+  }
+
+  function moved(parentId: string | null) {
+    setMoveDialogOpen(false);
+    if (parentId !== null) {
+      const parent = nodeById.get(parentId);
+      setExpanded((current) => {
+        const next = new Set(current).add(parentId);
+        for (const ancestor of parent?.breadcrumb ?? []) {
+          next.add(ancestor.id);
+        }
+        return next;
+      });
+    }
+    router.refresh();
+  }
+
+  function deleted() {
+    setDeleteDialogOpen(false);
+    setLifecycleError(null);
+    focusTreeAfterDelete.current = true;
+    navigateToNode();
+    router.refresh();
+  }
+
   return (
     <main
       className={selectedNode ? "dashboard dashboard--selected" : "dashboard"}
@@ -661,12 +801,57 @@ export function DashboardShell({
       </header>
 
       <div className="dashboard-toolbar" aria-label="Tree tools">
-        <div>
+        <div className="toolbar-count">
           <p className="eyebrow">{nodes.length === 1 ? "1 node" : `${nodes.length} nodes`}</p>
         </div>
-        <button className="button button--primary" type="button" onClick={() => setCreatingRoot(true)}>
-          New root node
-        </button>
+        <div className="tree-search">
+          <SearchIcon className="search-icon" />
+          <label>
+            <span className="sr-only">Search node titles</span>
+            <input
+              type="search"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Search nodes"
+              aria-controls={searchText.trim() ? "tree-search-results" : undefined}
+            />
+          </label>
+          {searchText.trim() ? (
+            <div id="tree-search-results" className="search-results" aria-label="Search results">
+              {searchResults.map((node) => (
+                <button type="button" key={node.id} onClick={() => chooseSearchResult(node)}>
+                  <strong>{node.title}</strong>
+                  <span>
+                    {formatBreadcrumb(node)}
+                    {node.completedAt !== null ? " · Completed" : ""}
+                  </span>
+                </button>
+              ))}
+              {searchResults.length === 0 ? <p>No matching nodes.</p> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="toolbar-actions">
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Show completed"
+            aria-pressed={showCompleted}
+            data-tooltip={showCompleted ? "Hide completed" : "Show completed"}
+            onClick={() => setShowCompleted((current) => !current)}
+          >
+            {showCompleted ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+          <button
+            className="icon-button icon-button--primary"
+            type="button"
+            aria-label="New root node"
+            data-tooltip="New root node"
+            onClick={() => setCreatingRoot(true)}
+          >
+            <PlusIcon />
+          </button>
+        </div>
       </div>
 
       {creatingRoot ? (
@@ -678,7 +863,7 @@ export function DashboardShell({
       <div className="dashboard-main">
         <section className="tree-pane" aria-labelledby="tree-heading">
           <div className="pane-heading">
-            <h1 id="tree-heading">Node tree</h1>
+            <h1 ref={treeHeadingRef} id="tree-heading" tabIndex={-1}>Node tree</h1>
             <p>Organize work at any depth.</p>
           </div>
 
@@ -689,10 +874,17 @@ export function DashboardShell({
                 Create your first root node
               </button>
             </div>
+          ) : visibleRoots.length === 0 ? (
+            <div className="tree-empty">
+              <p>No active nodes.</p>
+              <button className="text-action" type="button" onClick={() => setShowCompleted(true)}>
+                Show completed nodes
+              </button>
+            </div>
           ) : (
             <div className="node-tree" aria-label="Work nodes">
               <NodeTree
-                roots={rootNodes}
+                roots={visibleRoots}
                 selectedNodeId={selectedNode?.id}
                 expanded={expanded}
                 creatingChildFor={creatingTreeChildFor}
@@ -738,29 +930,77 @@ export function DashboardShell({
                 </ol>
               </nav>
               <TitleEditor node={selectedNode} onSaved={mutationSaved} />
+              <div className="node-status-line">
+                <span className={selectedNode.completedAt === null ? "status-pill" : "status-pill status-pill--completed"}>
+                  {selectedNode.completedAt === null ? "Active" : "Completed"}
+                </span>
+              </div>
               <ZeroMetrics />
               <div className="detail-fields">
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />
               </div>
-              <div className="detail-child">
-                {creatingDetailChild ? (
+              {selectedNode.completedAt === null ? (
+                <div className="detail-child">
+                  {creatingDetailChild ? (
                   <NodeCreateForm
                     parentId={selectedNode.id}
                     parentTitle={selectedNode.title}
                     onCreated={created}
                     onCancel={() => setCreatingDetailChild(false)}
                   />
-                ) : (
+                  ) : (
                   <button
-                    className="button button--quiet"
+                    className="icon-button"
                     type="button"
+                    aria-label="Add child node"
+                    data-tooltip="Add child node"
                     onClick={() => setCreatingDetailChild(true)}
                   >
-                    Add child node
+                    <PlusIcon />
                   </button>
-                )}
+                  )}
+                </div>
+              ) : null}
+              <div className="node-actions" aria-label="Node actions">
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label={
+                    lifecyclePending
+                      ? "Saving node status"
+                      : selectedNode.completedAt === null
+                        ? "Complete node"
+                        : "Reopen node"
+                  }
+                  data-tooltip={selectedNode.completedAt === null ? "Complete node" : "Reopen node"}
+                  disabled={lifecyclePending}
+                  onClick={() => void changeCompletion()}
+                >
+                  {selectedNode.completedAt === null ? <CheckIcon /> : <ReopenIcon />}
+                </button>
+                <button
+                  ref={moveTriggerRef}
+                  className="icon-button"
+                  type="button"
+                  aria-label="Move To…"
+                  data-tooltip="Move To…"
+                  onClick={() => setMoveDialogOpen(true)}
+                >
+                  <MoveIcon />
+                </button>
+                <button
+                  ref={deleteTriggerRef}
+                  className="icon-button icon-button--danger"
+                  type="button"
+                  aria-label="Delete node"
+                  data-tooltip="Delete node"
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  <TrashIcon />
+                </button>
               </div>
+              {lifecycleError ? <p className="detail-error" role="alert">{lifecycleError}</p> : null}
             </div>
           ) : (
             <div className="detail-empty">
@@ -771,6 +1011,23 @@ export function DashboardShell({
           )}
         </section>
       </div>
+      {selectedNode && moveDialogOpen ? (
+        <MoveNodeDialog
+          node={selectedNode}
+          nodes={orderedNodes}
+          onClose={() => setMoveDialogOpen(false)}
+          onMoved={moved}
+          returnFocusRef={moveTriggerRef}
+        />
+      ) : null}
+      {selectedNode && deleteDialogOpen ? (
+        <ConfirmDeleteDialog
+          node={selectedNode}
+          onClose={() => setDeleteDialogOpen(false)}
+          onDeleted={deleted}
+          returnFocusRef={deleteTriggerRef}
+        />
+      ) : null}
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { makeSignature } from "better-auth/crypto";
 import { Pool } from "pg";
 
@@ -13,6 +14,18 @@ if (!connectionString) {
 }
 
 const pool = new Pool({ connectionString });
+
+async function expectCenteredDialog(page: Page, dialog: Locator) {
+  await expect(dialog).toHaveCSS("animation-name", "dialog-enter");
+  await page.waitForTimeout(200);
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  // Native-dialog and mobile viewport rounding can differ by a handful of CSS pixels.
+  expect(Math.abs(box!.x + box!.width / 2 - viewport!.width / 2)).toBeLessThan(8);
+  expect(Math.abs(box!.y + box!.height / 2 - viewport!.height / 2)).toBeLessThan(8);
+}
 
 async function seedSession(email: string, emailVerified: boolean) {
   const userId = `browser-user-${randomUUID()}`;
@@ -35,6 +48,8 @@ async function seedSession(email: string, emailVerified: boolean) {
     cookie: `${token}.${signature}`,
     userId,
     async cleanup() {
+      await pool.query(`delete from active_timers where user_id = $1`, [userId]);
+      await pool.query(`delete from time_entries where user_id = $1`, [userId]);
       await pool.query(`delete from "user" where id = $1`, [userId]);
     },
   };
@@ -54,6 +69,22 @@ async function seedHierarchy(userId: string, depth: number) {
   }
 
   return parentId;
+}
+
+async function insertNode(
+  userId: string,
+  title: string,
+  position: number,
+  parentId: string | null = null,
+  completed = false,
+) {
+  const result = await pool.query<{ id: string }>(
+    `insert into nodes (user_id, parent_id, position, title, completed_at)
+     values ($1, $2, $3, $4, $5)
+     returning id`,
+    [userId, parentId, position, title, completed ? new Date("2026-07-22T00:00:00Z") : null],
+  );
+  return result.rows[0].id;
 }
 
 test.afterAll(async () => {
@@ -211,8 +242,8 @@ test("builds and edits a URL-selected hierarchy", async ({ context, page, isMobi
     await expect(page.locator('.node-list > li[aria-level="3"]')).toHaveCount(1);
 
     await page.getByRole("button", { name: "Edit title" }).click();
-    await page.getByLabel("Node title").fill("Discovery");
-    await page.getByLabel("Node title").press("Enter");
+    await page.getByLabel("Node title", { exact: true }).fill("Discovery");
+    await page.getByLabel("Node title", { exact: true }).press("Enter");
     await expect(page.getByRole("heading", { level: 1, name: "Discovery" })).toBeVisible();
 
     await page.getByRole("button", { name: "Add description" }).click();
@@ -289,6 +320,169 @@ test("keeps deep inline child creation within a narrow desktop pane", async ({
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     expect(hasHorizontalOverflow).toBe(false);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("searches, moves, completes, reopens, and deletes nodes", async ({
+  context,
+  page,
+  isMobile,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    for (let position = 0; position < 20; position += 1) {
+      await insertNode(seeded.userId, `Filler ${position + 1}`, position);
+    }
+    const sourceRootId = await insertNode(seeded.userId, "Client Alpha", 20);
+    const sourceId = await insertNode(seeded.userId, "Shared work", 0, sourceRootId);
+    await insertNode(seeded.userId, "Sibling project", 1, sourceRootId);
+    const destinationId = await insertNode(seeded.userId, "Destination", 21);
+    await insertNode(seeded.userId, "Shared work", 0, destinationId);
+    await insertNode(seeded.userId, "Old client", 22, null, true);
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+
+    await expect(page.getByRole("button", { name: "Old client", exact: true })).toHaveCount(0);
+    await page.getByLabel("Search node titles").fill("shared");
+    const searchResults = page.locator("#tree-search-results");
+    await expect(searchResults.getByRole("button")).toHaveCount(2);
+    await expect(searchResults).toContainText("Client Alpha / Shared work");
+    await expect(searchResults).toContainText("Destination / Shared work");
+    await searchResults.getByRole("button").filter({ hasText: "Client Alpha" }).click();
+    await expect(page).toHaveURL(new RegExp(`node=${sourceId}`));
+    await expect(page.getByRole("heading", { level: 1, name: "Shared work" })).toBeVisible();
+    const targetTreeButton = page.getByRole("button", { name: "Shared work", exact: true });
+    if (isMobile) {
+      await page.getByRole("button", { name: "Back to tree" }).click();
+      await expect(targetTreeButton).toBeVisible();
+      await expect(targetTreeButton).toBeFocused();
+      await targetTreeButton.click();
+    } else {
+      await expect(targetTreeButton).toBeVisible();
+      const targetBox = await targetTreeButton.boundingBox();
+      const viewport = page.viewportSize();
+      expect(targetBox).not.toBeNull();
+      expect(viewport).not.toBeNull();
+      expect(targetBox!.y).toBeGreaterThanOrEqual(0);
+      expect(targetBox!.y + targetBox!.height).toBeLessThanOrEqual(viewport!.height);
+    }
+
+    await page.getByRole("button", { name: "Move To…" }).click();
+    const moveDialog = page.getByRole("dialog", { name: /Choose a new parent/ });
+    await expectCenteredDialog(page, moveDialog);
+    await expect(moveDialog.getByLabel("Search destinations")).toBeFocused();
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Client Alpha");
+    await expect(
+      moveDialog.locator(".move-browser__nodes").getByRole("button", {
+        name: /Sibling project/,
+      }),
+    ).toBeVisible();
+    await moveDialog.getByRole("button", { name: "Up one level" }).click();
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Root");
+    await expect(moveDialog.getByRole("button", { name: "Move here" })).toBeFocused();
+    const destinationBrowserButton = moveDialog
+      .locator(".move-browser__nodes")
+      .getByRole("button", { name: /Destination/ });
+    await destinationBrowserButton.focus();
+    await destinationBrowserButton.press("Enter");
+    await expect(moveDialog.locator(".move-browser__toolbar")).toContainText("Destination");
+    await expect(moveDialog.getByRole("button", { name: "Move here" })).toBeFocused();
+    await moveDialog.getByLabel("Search destinations").fill("Client Alpha");
+    await expect(moveDialog.locator('[aria-label="Search move destinations"]')).toContainText(
+      "Client Alpha",
+    );
+    await moveDialog.getByLabel("Search destinations").fill("");
+    await moveDialog.getByRole("button", { name: "Move here" }).click();
+    const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+    await expect(breadcrumb.getByRole("button", { name: "Destination" })).toBeVisible();
+    await expect(breadcrumb.getByText("Shared work", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Complete node" }).click();
+    await expect(page.locator(".status-pill")).toHaveText("Completed");
+    if (isMobile) {
+      await page.getByRole("button", { name: "Back to tree" }).click();
+      await expect(page.getByRole("heading", { level: 1, name: "Node tree" })).toBeFocused();
+      await page.getByRole("button", { name: "Show completed" }).click();
+      await page.getByRole("button", { name: "Shared work, completed" }).click();
+    }
+    await page.getByRole("button", { name: "Reopen node" }).click();
+    await expect(page.locator(".status-pill")).toHaveText("Active");
+
+    const deleteTrigger = page.getByRole("button", { name: "Delete node" });
+    await deleteTrigger.click();
+    const deleteDialog = page.getByRole("dialog", { name: /Permanently delete/ });
+    await expectCenteredDialog(page, deleteDialog);
+    await expect(deleteDialog.locator(".dialog-copy")).toHaveText(
+      "This removes the node and every descendant. Deletion is blocked only when this subtree contains a time entry or a running timer.",
+    );
+    await deleteDialog.press("Escape");
+    await expect(deleteTrigger).toBeFocused();
+    await deleteTrigger.click();
+    await page.getByRole("button", { name: "Delete permanently" }).click();
+    await expect(page).not.toHaveURL(new RegExp(`node=${sourceId}`));
+    await expect(page.getByRole("heading", { level: 1, name: "Shared work" })).toHaveCount(0);
+
+    await page.getByLabel("Search node titles").fill("Old client");
+    await page.locator("#tree-search-results").getByRole("button").click();
+    await expect(page.getByRole("button", { name: "Show completed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("heading", { level: 1, name: "Old client" })).toBeVisible();
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("identifies every running timer that blocks recursive completion", async ({
+  context,
+  page,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const rootId = await insertNode(seeded.userId, "Timed project", 0);
+    const childId = await insertNode(seeded.userId, "Running child", 0, rootId);
+    await pool.query(
+      `insert into active_timers (user_id, node_id, started_at, work_date)
+       values
+         ($1, $2, now(), '2026-07-22'),
+         ($1, $3, now(), '2026-07-22')`,
+      [seeded.userId, rootId, childId],
+    );
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto(`/?node=${rootId}`);
+
+    await page.getByRole("button", { name: "Complete node" }).click();
+
+    const completionAlert = page.locator('.detail-error[role="alert"]');
+    await expect(completionAlert).toContainText(
+      "Stop the running timers in this subtree first.",
+    );
+    await expect(completionAlert).toContainText("Running: Timed project;");
+    await expect(completionAlert).toContainText("Timed project / Running child");
+    await expect(page.locator(".status-pill")).toHaveText("Active");
   } finally {
     await seeded.cleanup();
   }

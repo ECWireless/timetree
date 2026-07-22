@@ -123,7 +123,8 @@ Status: Complete
 
 ## Phase 4 — Tree organization and lifecycle
 
-Status: In progress — transactional organization and lifecycle services complete.
+Status: In progress — transactional services and QA-approved search, lifecycle, move, and delete
+controls complete; pointer drag-and-drop remains.
 
 ### Build
 
