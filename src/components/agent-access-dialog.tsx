@@ -292,7 +292,7 @@ export function AgentAccessDialog({
   }
 
   function reconcileCredentialState(message: string) {
-    onCredentialConflict(message);
+    queueMicrotask(() => onCredentialConflict(message));
   }
 
   async function copyCredentialLine() {
