@@ -29,6 +29,20 @@ async function expectCenteredDialog(page: Page, dialog: Locator) {
   expect(Math.abs(box!.y + box!.height / 2 - viewport!.height / 2)).toBeLessThan(8);
 }
 
+async function expectHorizontalIconButton(button: Locator) {
+  const layout = await button.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      alignItems: style.alignItems,
+      display: style.display,
+      flexDirection: style.flexDirection,
+    };
+  });
+  expect(["flex", "inline-flex"]).toContain(layout.display);
+  expect(layout.alignItems).toBe("center");
+  expect(layout.flexDirection).toBe("row");
+}
+
 async function dragNodeTo(
   page: Page,
   sourceName: string,
@@ -1223,12 +1237,21 @@ test.describe("concurrent persistent timers", () => {
       await page.clock.setFixedTime(new Date("2026-06-30T23:59:30-07:00"));
       await page.goto(`/?node=${firstId}`);
 
-      await page.getByRole("button", { name: "Start timer" }).evaluate((button) => {
+      const startTimerButton = page.getByRole("button", {
+        name: "Start timer",
+      });
+      await expectHorizontalIconButton(startTimerButton);
+      await startTimerButton.evaluate((button) => {
         (button as HTMLButtonElement).click();
         (button as HTMLButtonElement).click();
       });
       await expect(page.locator(".active-timer")).toHaveCount(1);
-      await expect(page.getByRole("button", { name: "Stop timer", exact: true })).toBeVisible();
+      const stopTimerButton = page.getByRole("button", {
+        name: "Stop timer",
+        exact: true,
+      });
+      await expect(stopTimerButton).toBeVisible();
+      await expectHorizontalIconButton(stopTimerButton);
       await expect
         .poll(async () => {
           const result = await pool.query<{ count: string }>(

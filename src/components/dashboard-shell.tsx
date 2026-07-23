@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useTransition,
   type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
@@ -29,6 +30,7 @@ import {
 
 import { completeNode, createNode, moveNode, reopenNode, updateNode } from "@/app/actions/nodes";
 import { startTimer, stopTimer } from "@/app/actions/timers";
+import { AgentAccessDialog } from "@/components/agent-access-dialog";
 import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
 import { ConfirmDeleteDialog, MoveNodeDialog } from "@/components/node-dialogs";
@@ -40,6 +42,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   GripIcon,
+  KeyIcon,
   MoveIcon,
   PlusIcon,
   PlayIcon,
@@ -49,6 +52,7 @@ import {
   StopIcon,
   WarningIcon,
 } from "@/components/icons";
+import type { AgentApiKeyMetadata } from "@/lib/agent/contracts";
 import { NodeTreeList } from "@/components/node-tree-list";
 import { TimeEntryLedger } from "@/components/time-entry-ledger";
 import {
@@ -75,6 +79,7 @@ import {
 type DashboardShellProps = {
   activeTimers: ActiveTimerRecord[];
   email: string;
+  initialAgentApiKeyMetadata: AgentApiKeyMetadata | null;
   initialNowMilliseconds: number;
   initialEntryPage: TimeEntryPage;
   nodes: FlatNode[];
@@ -82,6 +87,7 @@ type DashboardShellProps = {
   period: DashboardPeriodInput;
   periodRequiresCanonicalization: boolean;
   selectedNodeId?: string;
+  timeTreeCanonicalOrigin: string | null;
 };
 
 function useSharedTimerClock(activeTimers: readonly ActiveTimerRecord[], initialNowMilliseconds: number) {
@@ -969,6 +975,7 @@ function ActiveTimersStrip({
 export function DashboardShell({
   activeTimers,
   email,
+  initialAgentApiKeyMetadata,
   initialNowMilliseconds,
   initialEntryPage,
   nodes,
@@ -976,6 +983,7 @@ export function DashboardShell({
   period,
   periodRequiresCanonicalization,
   selectedNodeId,
+  timeTreeCanonicalOrigin,
 }: DashboardShellProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -999,6 +1007,12 @@ export function DashboardShell({
   const [showCompleted, setShowCompleted] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [agentAccessDialogOpen, setAgentAccessDialogOpen] = useState(false);
+  const [agentAccessNotice, setAgentAccessNotice] = useState<{
+    message: string;
+    nodeId: string;
+  } | null>(null);
+  const [agentAccessRefreshing, startAgentAccessRefresh] = useTransition();
   const [lifecyclePending, setLifecyclePending] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [dragPending, setDragPending] = useState(false);
@@ -1017,6 +1031,7 @@ export function DashboardShell({
   const treeHeadingRef = useRef<HTMLHeadingElement>(null);
   const moveTriggerRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const agentAccessTriggerRef = useRef<HTMLButtonElement>(null);
   const rootNodes = useMemo(
     () => orderedNodes.filter((node) => node.parentId === null),
     [orderedNodes],
@@ -1090,6 +1105,8 @@ export function DashboardShell({
   }, [expanded, searchText, showCompleted]);
 
   function navigateToNode(nodeId?: string) {
+    setAgentAccessDialogOpen(false);
+    setAgentAccessNotice(null);
     setCreatingTreeChildFor(null);
     setCreatingDetailChild(false);
     const target = nodeId ? nodeById.get(nodeId) : undefined;
@@ -1119,6 +1136,7 @@ export function DashboardShell({
       return;
     }
 
+    setAgentAccessNotice(null);
     treeFocusNodeId.current = selectedNode.id;
     pendingFocus.current = "tree";
     setCreatingDetailChild(false);
@@ -1558,6 +1576,49 @@ export function DashboardShell({
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />
               </div>
+              <section
+                className="agent-access-summary"
+                aria-labelledby="agent-access-summary-heading"
+              >
+                <div>
+                  <span className="agent-access-summary__icon" aria-hidden="true">
+                    <KeyIcon />
+                  </span>
+                  <div>
+                    <h2 id="agent-access-summary-heading">Agent access</h2>
+                    <p>
+                      Let Codex record work inside this node’s subtree.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  ref={agentAccessTriggerRef}
+                  className="button button--quiet"
+                  type="button"
+                  aria-disabled={agentAccessRefreshing || undefined}
+                  onClick={() => {
+                    if (agentAccessRefreshing) {
+                      return;
+                    }
+                    setAgentAccessNotice(null);
+                    setAgentAccessDialogOpen(true);
+                  }}
+                >
+                  {initialAgentApiKeyMetadata
+                    ? agentAccessRefreshing
+                      ? "Refreshing agent access…"
+                      : "Manage agent access"
+                    : agentAccessRefreshing
+                      ? "Refreshing agent access…"
+                      : "Set up agent access"}
+                </button>
+              </section>
+              {agentAccessNotice?.nodeId === selectedNode.id ? (
+                <p className="detail-error" role="alert">
+                  {agentAccessNotice.message} Current agent access has been
+                  refreshed.
+                </p>
+              ) : null}
               <TimeEntryLedger
                 key={`${selectedNode.id}:${stoppedEntries[0]?.id ?? "initial"}`}
                 initialPage={{
@@ -1659,6 +1720,23 @@ export function DashboardShell({
           onClose={() => setDeleteDialogOpen(false)}
           onDeleted={deleted}
           returnFocusRef={deleteTriggerRef}
+        />
+      ) : null}
+      {selectedNode && agentAccessDialogOpen ? (
+        <AgentAccessDialog
+          key={selectedNode.id}
+          canonicalOrigin={timeTreeCanonicalOrigin}
+          initialCredential={initialAgentApiKeyMetadata}
+          nodeId={selectedNode.id}
+          nodeTitle={selectedNode.title}
+          onClose={() => setAgentAccessDialogOpen(false)}
+          onCredentialChanged={() => router.refresh()}
+          onCredentialConflict={(message) => {
+            setAgentAccessDialogOpen(false);
+            setAgentAccessNotice({ message, nodeId: selectedNode.id });
+            startAgentAccessRefresh(() => router.refresh());
+          }}
+          returnFocusRef={agentAccessTriggerRef}
         />
       ) : null}
     </main>

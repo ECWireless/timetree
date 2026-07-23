@@ -2,6 +2,9 @@ import { SignInButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { AuthorizationError } from "@/lib/auth/policy";
+import type { AgentApiKeyMetadata } from "@/lib/agent/contracts";
+import { getAgentApiKeyMetadata } from "@/lib/server/agent-api-keys";
+import { getTimeTreeCanonicalOrigin } from "@/lib/server/agent-setup";
 import { getDashboardData } from "@/lib/server/dashboard";
 import { getNodeEntries } from "@/lib/server/time-entries";
 import type { TimeEntryPage } from "@/lib/time-entries/contracts";
@@ -39,12 +42,27 @@ export default async function Home({ searchParams }: HomeProps) {
 
   if (dashboard) {
     const selectedNodeExists = Boolean(node && dashboard.nodes.some((candidate) => candidate.id === node));
-    const initialEntryPage: TimeEntryPage = selectedNodeExists
-      ? await getNodeEntries(node!)
-      : { entries: [], nextCursor: null };
+    let initialEntryPage: TimeEntryPage = { entries: [], nextCursor: null };
+    let initialAgentApiKeyMetadata: AgentApiKeyMetadata | null = null;
+    if (selectedNodeExists) {
+      [initialEntryPage, initialAgentApiKeyMetadata] = await Promise.all([
+        getNodeEntries(node!),
+        getAgentApiKeyMetadata(node!),
+      ]);
+    }
+    let timeTreeCanonicalOrigin: string | null = null;
+    try {
+      timeTreeCanonicalOrigin = getTimeTreeCanonicalOrigin();
+    } catch (caught) {
+      if (!(caught instanceof RangeError)) {
+        throw caught;
+      }
+    }
+
     return (
       <DashboardShell
         email={dashboard.user.email}
+        initialAgentApiKeyMetadata={initialAgentApiKeyMetadata}
         initialNowMilliseconds={dashboard.readAtMilliseconds}
         initialEntryPage={initialEntryPage}
         activeTimers={dashboard.activeTimers}
@@ -53,6 +71,7 @@ export default async function Home({ searchParams }: HomeProps) {
         period={periodUrl.period}
         periodRequiresCanonicalization={periodUrl.requiresCanonicalization}
         selectedNodeId={node}
+        timeTreeCanonicalOrigin={timeTreeCanonicalOrigin}
       />
     );
   }

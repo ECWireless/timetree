@@ -132,7 +132,8 @@ body {
   cursor: pointer;
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled="true"] {
   cursor: wait;
   opacity: 0.65;
 }
@@ -1264,6 +1265,55 @@ textarea {
   gap: 0;
 }
 
+.agent-access-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-block: 1px solid rgb(154 166 178 / 18%);
+  padding: 1.25rem 0;
+}
+
+.agent-access-summary > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.agent-access-summary__icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgb(18 99 173 / 45%);
+  border-radius: 50%;
+  background: rgb(18 99 173 / 12%);
+  color: #73b9f5;
+}
+
+.agent-access-summary__icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.agent-access-summary h2,
+.agent-access-summary p {
+  margin: 0;
+}
+
+.agent-access-summary h2 {
+  font-size: 0.875rem;
+}
+
+.agent-access-summary p {
+  margin-top: 0.25rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
 .timer-controls {
   display: flex;
   align-items: center;
@@ -1299,6 +1349,9 @@ textarea {
 
 .button--timer-start,
 .button--timer-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 0.45rem;
 }
 
@@ -1699,6 +1752,251 @@ textarea {
 .node-dialog::backdrop {
   background: rgb(0 0 0 / 72%);
   animation: backdrop-enter 180ms ease-out;
+}
+
+.agent-access-dialog {
+  width: min(calc(100% - 2rem), 48rem);
+  max-height: min(48rem, calc(100dvh - 2rem));
+}
+
+.agent-access-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-access-dialog > .dialog-heading {
+  flex: 0 0 auto;
+  padding-bottom: 1rem;
+}
+
+.agent-access-dialog__body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  gap: 1rem;
+  padding-right: 0.25rem;
+  overscroll-behavior: contain;
+}
+
+.agent-setup-section {
+  border: 1px solid rgb(154 166 178 / 22%);
+  border-radius: 0.65rem;
+  padding: 1rem;
+  background: rgb(5 6 8 / 46%);
+}
+
+.agent-setup-section__heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.agent-setup-section__heading h3,
+.agent-setup-section__heading p {
+  margin: 0;
+}
+
+.agent-setup-section__heading h3 {
+  font-size: 1rem;
+}
+
+.agent-setup-kicker {
+  margin-bottom: 0.35rem !important;
+  color: #73b9f5;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-setup-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgb(154 166 178 / 28%);
+  border-radius: 999px;
+  padding: 0.25rem 0.5rem;
+  color: var(--color-muted);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.agent-setup-badge--active {
+  border-color: rgb(74 222 128 / 35%);
+  color: #92e6ac;
+}
+
+.agent-setup-copy,
+.agent-credential > p {
+  margin: 0.75rem 0 1rem;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.agent-setup-time-zone,
+.agent-setup-status {
+  margin: 0 0 0.8rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.agent-setup-time-zone strong {
+  color: var(--color-ink);
+}
+
+.agent-setup-section .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.agent-setup-section .button svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.agent-setup-warning {
+  display: flex;
+  align-items: start;
+  gap: 0.55rem;
+  margin: 0.75rem 0 0;
+  border: 1px solid rgb(250 243 14 / 28%);
+  border-radius: 0.45rem;
+  padding: 0.7rem;
+  background: rgb(250 243 14 / 6%);
+  color: #fffca6;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.agent-setup-warning svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+}
+
+.agent-setup-warning a {
+  color: inherit;
+}
+
+.agent-setup-fallback {
+  margin-top: 0.8rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.agent-setup-fallback summary {
+  width: fit-content;
+  color: #73b9f5;
+  cursor: pointer;
+}
+
+.agent-setup-fallback__content {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.75rem;
+}
+
+.agent-setup-fallback__content p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.agent-setup-fallback pre,
+.agent-secret__value {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid rgb(154 166 178 / 22%);
+  border-radius: 0.45rem;
+  margin: 0;
+  padding: 0.75rem;
+  background: #050608;
+  color: #dfe8f2;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-copy-status {
+  min-height: 1.1rem;
+  margin: 0.65rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.7rem;
+}
+
+.agent-secret__warning {
+  display: flex;
+  align-items: start;
+  gap: 0.75rem;
+  border: 1px solid rgb(250 243 14 / 42%);
+  border-radius: 0.5rem;
+  padding: 0.8rem;
+  background: rgb(250 243 14 / 7%);
+}
+
+.agent-secret__warning > svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  color: var(--color-yellow);
+}
+
+.agent-secret__warning strong {
+  color: var(--color-yellow);
+}
+
+.agent-secret__warning p {
+  margin: 0.3rem 0 0;
+  color: var(--color-ink);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.agent-secret__safety {
+  margin: 0.8rem 0;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.agent-secret__value {
+  color: #fffca6;
+}
+
+.agent-credential__date {
+  margin-top: -0.45rem !important;
+  font-size: 0.7rem !important;
+}
+
+.agent-credential__management {
+  border-top: 1px solid rgb(154 166 178 / 18%);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.agent-credential__management h4 {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-confirmation {
+  margin-top: 0.75rem;
+  border-left: 2px solid rgb(255 171 165 / 65%);
+  padding-left: 0.75rem;
+}
+
+.agent-confirmation p {
+  margin: 0;
+  color: #ffcfcb;
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 @keyframes dialog-enter {
@@ -2154,6 +2452,34 @@ textarea {
 
   .node-dialog {
     padding: 1rem;
+  }
+
+  .agent-access-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-access-summary .button {
+    width: 100%;
+  }
+
+  .agent-access-dialog {
+    width: calc(100% - 1rem);
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .agent-setup-section__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-setup-badge {
+    width: fit-content;
+  }
+
+  .agent-setup-section > .button,
+  .agent-secret .button {
+    width: 100%;
   }
 
   .node-metrics > span {
