@@ -188,6 +188,29 @@ export const timeEntries = pgTable(
   ],
 );
 
+export const agentApiKeys = pgTable(
+  "agent_api_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    rootNodeId: uuid("root_node_id").notNull(),
+    secretHash: varchar("secret_hash", { length: 64 }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    unique("agent_api_keys_user_root_unique").on(table.userId, table.rootNodeId),
+    foreignKey({
+      name: "agent_api_keys_root_owner_fk",
+      columns: [table.userId, table.rootNodeId],
+      foreignColumns: [nodes.userId, nodes.id],
+    }).onDelete("cascade"),
+    check(
+      "agent_api_keys_secret_hash_check",
+      sql`${table.secretHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+  ],
+);
+
 export const authSchema = {
   user,
   session,
@@ -200,4 +223,5 @@ export const schema = {
   nodes,
   activeTimers,
   timeEntries,
+  agentApiKeys,
 };

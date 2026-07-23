@@ -3,7 +3,7 @@ import "server-only";
 import { and, asc, eq, getTableColumns, gte, inArray, isNull, lt, max, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { activeTimers, nodes, timeEntries, user } from "@/db/schema";
+import { activeTimers, agentApiKeys, nodes, timeEntries, user } from "@/db/schema";
 import type { CreateNodeInput, MoveNodeInput, UpdateNodeInput } from "@/lib/nodes/contracts";
 import { assembleNodeTree, type FlatNode } from "@/lib/nodes/tree";
 import {
@@ -12,7 +12,7 @@ import {
 } from "@/lib/time-entries/period";
 import type { ActiveTimerRecord } from "@/lib/timers/contracts";
 
-type NodeTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type NodeTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 type ActiveTimerInsert = Pick<
   typeof activeTimers.$inferInsert,
@@ -64,7 +64,7 @@ function getDeletionConflictReason(error: unknown) {
   return null;
 }
 
-async function lockOwnerNodes(tx: NodeTransaction, userId: string) {
+export async function lockOwnerNodes(tx: NodeTransaction, userId: string) {
   await tx.execute(sql`select ${user.id} from ${user} where ${user.id} = ${userId} for update`);
   const rows = await tx
     .select()
@@ -452,6 +452,17 @@ export async function deleteNodeForUser(userId: string, nodeId: string) {
       const lockedNodes = await lockOwnerNodes(tx, userId);
       const target = requireNode(lockedNodes, nodeId);
       const subtreeIds = getSubtreeIds(lockedNodes, nodeId);
+      await tx
+        .select({ id: agentApiKeys.id })
+        .from(agentApiKeys)
+        .where(
+          and(
+            eq(agentApiKeys.userId, userId),
+            inArray(agentApiKeys.rootNodeId, subtreeIds),
+          ),
+        )
+        .orderBy(asc(agentApiKeys.id))
+        .for("update");
       const timers = await tx
         .select({ nodeId: activeTimers.nodeId })
         .from(activeTimers)
