@@ -50,7 +50,7 @@ export class TimeEntryMutationError extends Error {
   }
 }
 
-function toTimeEntryRecord(row: typeof timeEntries.$inferSelect): TimeEntryRecord {
+export function toTimeEntryRecord(row: typeof timeEntries.$inferSelect): TimeEntryRecord {
   return {
     id: row.id,
     nodeId: row.nodeId,

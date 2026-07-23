@@ -333,6 +333,135 @@ textarea {
   background: var(--color-black);
 }
 
+.active-timers-strip {
+  position: fixed;
+  z-index: 40;
+  bottom: 1.25rem;
+  left: 50%;
+  display: block;
+  width: min(28rem, calc(100vw - 2rem));
+  align-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  filter: drop-shadow(0 1rem 2rem rgb(0 0 0 / 50%));
+  transform: translateX(-50%);
+  animation: timer-dock-in 260ms ease-out both;
+}
+
+@keyframes timer-dock-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translate(-50%, 0.75rem);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate(-50%, 0);
+  }
+}
+
+.active-timers-list {
+  display: flex;
+  max-height: min(24rem, calc(100vh - 2rem));
+  min-width: 0;
+  flex: 1;
+  flex-direction: column-reverse;
+  gap: 0.45rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0.35rem;
+  background: rgb(8 10 9 / 16%);
+  backdrop-filter: blur(14px);
+  overscroll-behavior-y: contain;
+  scroll-snap-type: y proximity;
+  scrollbar-width: thin;
+}
+
+.active-timer {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: minmax(7rem, 1fr) auto 2.5rem;
+  gap: 0.65rem;
+  border: 1px solid rgb(250 243 14 / 25%);
+  border-radius: 0.45rem;
+  padding: 0.35rem;
+  background: #090b08;
+  scroll-snap-align: start;
+  animation: timer-card-in 260ms ease-out both;
+}
+
+@keyframes timer-card-in {
+  from { opacity: 0; filter: blur(6px); transform: translateY(0.5rem); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+.active-timer__jump {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+  border: 0;
+  padding: 0.1rem 0.25rem;
+  background: transparent;
+  color: var(--color-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.active-timer__jump strong,
+.active-timer__jump span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-timer__jump strong {
+  font-size: 0.75rem;
+}
+
+.active-timer__jump span {
+  color: var(--color-muted);
+  font-size: 0.625rem;
+}
+
+.active-timer time,
+.timer-controls time {
+  color: var(--color-yellow);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.active-timer__stop {
+  color: var(--color-yellow);
+}
+
+.active-timer__stop.icon-button::after {
+  top: 50%;
+  right: calc(100% + 0.45rem);
+  left: auto;
+  max-width: 10rem;
+  transform: translate(0.2rem, -50%);
+}
+
+.active-timer__stop.icon-button:hover::after,
+.active-timer__stop.icon-button:focus-visible::after {
+  transform: translate(0, -50%);
+}
+
+.active-timers-error {
+  border-radius: 0.45rem;
+  margin: 0.4rem 0.35rem 0.15rem;
+  padding: 0.5rem 0.65rem;
+  background: rgb(17 24 32 / 88%);
+  color: #ffaba5;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
 .dashboard-header {
   display: flex;
   min-height: 4.25rem;
@@ -527,6 +656,10 @@ textarea {
 }
 
 .pane-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
   padding: 1.5rem clamp(1rem, 3vw, 2rem) 1rem;
 }
 
@@ -545,6 +678,85 @@ textarea {
   margin-top: 0.4rem;
   color: var(--color-muted);
   font-size: 0.8125rem;
+}
+
+.tree-summary {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 1rem;
+  text-align: right;
+}
+
+.tree-summary > span {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.tree-summary strong {
+  font-size: 0.875rem;
+}
+
+.tree-summary small {
+  color: var(--color-muted);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tree-summary--mixed span:last-child strong {
+  color: inherit;
+}
+
+.tree-summary__info {
+  position: relative;
+  display: inline-grid;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-left: 0.3rem;
+  place-items: center;
+  border: 1px solid rgb(154 166 178 / 55%);
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.55rem;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: help;
+}
+
+.tree-summary__info::after {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  width: 14rem;
+  border: 1px solid rgb(154 166 178 / 30%);
+  border-radius: 0.4rem;
+  padding: 0.5rem;
+  background: #111820;
+  color: var(--color-ink);
+  box-shadow: 0 0.75rem 1.75rem rgb(0 0 0 / 45%);
+  content: attr(data-tooltip);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transform: translateY(-0.2rem);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.tree-summary__info:hover::after,
+.tree-summary__info:focus::after,
+.tree-summary__info:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .tree-empty {
@@ -598,6 +810,16 @@ textarea {
 
 .node-row:hover {
   background: #0b0f14;
+}
+
+.node-row--running {
+  background: rgb(250 243 14 / 4%);
+  box-shadow: inset 0.18rem 0 var(--color-yellow);
+}
+
+.node-select > span:first-child .node-running-state {
+  color: var(--color-yellow);
+  font-variant-numeric: tabular-nums;
 }
 
 .node-depth-markers {
@@ -1042,17 +1264,70 @@ textarea {
   gap: 0;
 }
 
+.timer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 0.5rem 0 1rem;
+}
+
+.timer-controls h2,
+.timer-controls p {
+  margin: 0;
+}
+
+.timer-controls h2 {
+  color: var(--color-muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.timer-controls p {
+  margin-top: 0.3rem;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+}
+
+.timer-controls time {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 1.35rem;
+}
+
+.button--timer-start,
+.button--timer-stop {
+  gap: 0.45rem;
+}
+
+.button--timer-start {
+  border-color: rgb(250 243 14 / 55%);
+  color: var(--color-yellow);
+}
+
+.button--timer-stop {
+  border-color: rgb(255 171 165 / 55%);
+  color: #ffaba5;
+}
+
+.button--timer-start svg,
+.button--timer-stop svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 .detail-field {
   display: flex;
   align-items: start;
   justify-content: space-between;
   gap: 2rem;
-  border-bottom: 1px solid rgb(154 166 178 / 18%);
   padding: 1.25rem 0;
 }
 
 .detail-field:first-child {
-  border-top: 1px solid rgb(154 166 178 / 18%);
+  border-top: 0;
 }
 
 .detail-field h2,
@@ -1149,7 +1424,6 @@ textarea {
 }
 
 .time-ledger {
-  border-top: 1px solid rgb(154 166 178 / 18%);
   margin-top: 2rem;
   padding-top: 1.5rem;
 }
@@ -1644,14 +1918,31 @@ textarea {
 }
 
 @media (min-width: 761px) {
-  .dashboard-main {
-    height: calc(100vh - 9.75rem);
+  html:has(.dashboard),
+  body:has(.dashboard) {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .dashboard {
+    display: flex;
+    height: 100dvh;
     min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .dashboard-main {
+    height: auto;
+    min-height: 0;
+    flex: 1;
   }
 
   .tree-pane,
   .detail-pane {
     overflow-y: auto;
+    overscroll-behavior-y: contain;
   }
 }
 
@@ -1713,6 +2004,24 @@ textarea {
 }
 
 @media (max-width: 760px) {
+  .active-timers-strip {
+    bottom: 0.75rem;
+    width: calc(100vw - 1rem);
+  }
+
+  .active-timers-list {
+    max-height: min(14rem, 38dvh);
+    width: 100%;
+  }
+
+  .active-timers-error {
+    flex: none;
+  }
+
+  .active-timer {
+    min-width: 0;
+  }
+
   .dashboard-header {
     min-height: 3.75rem;
   }
@@ -1768,6 +2077,17 @@ textarea {
     border-right: 0;
   }
 
+  .pane-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .tree-summary {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
   .detail-pane {
     display: none;
     padding: 1.25rem 1rem 3rem;
@@ -1779,6 +2099,11 @@ textarea {
 
   .dashboard--selected .detail-pane {
     display: block;
+  }
+
+  .dashboard--timers .tree-pane,
+  .dashboard--timers .detail-pane {
+    padding-bottom: calc(min(14rem, 38dvh) + 1.5rem);
   }
 
   .mobile-back {
@@ -1851,6 +2176,13 @@ textarea {
 
   .entry-row__meta {
     justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .active-timers-strip,
+  .active-timer {
+    animation: none;
   }
 }
 

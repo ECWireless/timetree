@@ -249,6 +249,8 @@ Status: Complete
 
 ## Phase 6 — Concurrent persistent timers
 
+Status: Complete
+
 ### Build
 
 - Implement timer start with local work date and resolved-rate snapshot.
