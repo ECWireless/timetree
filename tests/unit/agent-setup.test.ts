@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createTimeTreeConnectionVerificationPrompt,
   createTimeTreeCodexSetup,
   getCanonicalTimeTreeOrigin,
   resolveTimeTreeHarnessOrigin,
@@ -185,18 +186,12 @@ describe("Codex timekeeping setup", () => {
     expect(setup.verificationPrompt).toContain(
       "Do not create nodes, start or stop timers",
     );
-  });
-
-  it("versions acknowledgement by harness, skill version, and deployment", () => {
-    expect(setup.acknowledgementKey).toBe(
-      `timetree:codex:${TIMETREE_CODEX_SKILL_VERSION}:https%3A%2F%2Ftime.example.test`,
+    expect(setup.verificationPrompt).toBe(
+      createTimeTreeConnectionVerificationPrompt(),
     );
-    expect(
-      createTimeTreeCodexSetup({
-        canonicalOrigin: "https://other.example.test",
-        timeZone: "UTC",
-      }).acknowledgementKey,
-    ).not.toBe(setup.acknowledgementKey);
+    expect(createTimeTreeConnectionVerificationPrompt()).not.toContain(
+      "time.example.test",
+    );
   });
 
   it("rejects unsafe origins and invalid time zones", () => {

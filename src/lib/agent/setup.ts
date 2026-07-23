@@ -17,7 +17,6 @@ export type TimeTreeHarnessOriginResult =
     };
 
 export type TimeTreeCodexSetup = {
-  acknowledgementKey: string;
   activationMarkdown: string;
   canonicalOrigin: string;
   installationPrompt: string;
@@ -144,7 +143,7 @@ function createActivationMarkdown() {
 When the current repository's root \`.env\` defines \`TIMETREE_API_KEY\`, use the globally installed \`${TIMETREE_CODEX_SKILL_NAME}\` skill for every work session in that repository. Follow its start/stop boundaries throughout the task, including after user input or approval.`;
 }
 
-function createVerificationPrompt() {
+export function createTimeTreeConnectionVerificationPrompt() {
   return `Verify this repository's TimeTree connection without mutating TimeTree. Use the globally installed \`${TIMETREE_CODEX_SKILL_NAME}\` skill. First confirm that the repository-root \`.env\` is untracked and ignored. Then read the authorized tree and report only whether the connection succeeded, the scoped root title, and the number of accessible nodes. Do not create nodes, start or stop timers, or print the API key, authorization header, credential fragments, or raw response.`;
 }
 
@@ -190,12 +189,6 @@ export function createTimeTreeCodexSetup({
   const activationMarkdown = createActivationMarkdown();
 
   return {
-    acknowledgementKey: [
-      "timetree",
-      "codex",
-      TIMETREE_CODEX_SKILL_VERSION,
-      encodeURIComponent(normalizedOrigin),
-    ].join(":"),
     activationMarkdown,
     canonicalOrigin: normalizedOrigin,
     installationPrompt: createInstallationPrompt(
@@ -206,6 +199,6 @@ export function createTimeTreeCodexSetup({
     skillPath: TIMETREE_CODEX_SKILL_PATH,
     skillVersion: TIMETREE_CODEX_SKILL_VERSION,
     timeZone,
-    verificationPrompt: createVerificationPrompt(),
+    verificationPrompt: createTimeTreeConnectionVerificationPrompt(),
   };
 }

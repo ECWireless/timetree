@@ -166,3 +166,21 @@ export function StopIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function KeyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="15" r="4" />
+      <path d="m11 12 8-8M16 7l2 2M14 9l2 2" />
+    </Icon>
+  );
+}
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="8" y="8" width="11" height="11" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </Icon>
+  );
+}

@@ -336,11 +336,11 @@ The repository connection setup:
   the credential; and
 - offers a non-mutating connection-verification prompt after setup.
 
-The dialog may remember in browser-local storage that harness setup was
-acknowledged for a combination of TimeTree origin, harness type, and generated
-skill version. It describes this state as an acknowledgement rather than proof
-of installation, always lets the user reopen the setup instructions, and
-resurfaces them when the generated skill version changes.
+The dialog does not attempt to remember whether harness setup was copied or
+installed. Copying a prompt is not proof that a particular Codex installation
+was configured. The one-time label and explanatory copy tell the owner to paste
+the prompt into any Codex session on each installation they want to configure,
+and the setup instructions remain available whenever they reopen the dialog.
 
 The one-time secret and agent-setup flow is an explicit exception to the
 dashboard's general preference against modals. The initial integration targets
@@ -873,8 +873,8 @@ DashboardPage (server)
 - The server page provides authoritative dashboard data and the selected node's
   first page of entries.
 - Expanded nodes, search text, and "Show completed" are ephemeral client state.
-- The application does not add Redux or React Query. Browser-local persistence
-  is limited to the versioned agent-harness setup acknowledgement.
+- The application does not add Redux or React Query. Agent setup and
+  credentials are not persisted in browser-local storage.
 - Selecting a node updates the URL and loads its first entry page from the
   server.
 - The all-time period is the default. Switching to day or month derives an

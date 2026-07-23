@@ -24,6 +24,7 @@ import type { DashboardNode } from "@/lib/nodes/tree";
 
 type DialogFrameProps = {
   children: ReactNode;
+  className?: string;
   initialFocusRef?: RefObject<HTMLElement | null>;
   labelledBy: string;
   onClose: () => void;
@@ -31,8 +32,9 @@ type DialogFrameProps = {
   returnFocusRef: RefObject<HTMLButtonElement | null>;
 };
 
-function DialogFrame({
+export function DialogFrame({
   children,
+  className,
   initialFocusRef,
   labelledBy,
   onClose,
@@ -65,7 +67,7 @@ function DialogFrame({
   return (
     <dialog
       ref={dialogRef}
-      className="node-dialog"
+      className={["node-dialog", className].filter(Boolean).join(" ")}
       aria-labelledby={labelledBy}
       onCancel={(event) => {
         if (preventClose) {
