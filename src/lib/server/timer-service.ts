@@ -5,7 +5,11 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { activeTimers, timeEntries } from "@/db/schema";
 import type { FlatNode } from "@/lib/nodes/tree";
-import { withLockedIncompleteNodeForUser } from "@/lib/server/node-service";
+import {
+  lockOwnerNodes,
+  type NodeTransaction,
+  withLockedIncompleteNodeForUser,
+} from "@/lib/server/node-service";
 import { toTimeEntryRecord } from "@/lib/server/time-entry-service";
 import type { ActiveTimerRecord } from "@/lib/timers/contracts";
 
@@ -35,7 +39,7 @@ function toActiveTimerRecord(row: typeof activeTimers.$inferSelect): ActiveTimer
   };
 }
 
-function resolveRate(target: FlatNode, allNodes: readonly FlatNode[]) {
+export function resolveTimerRate(target: FlatNode, allNodes: readonly FlatNode[]) {
   const byId = new Map(allNodes.map((node) => [node.id, node]));
   const visited = new Set<string>();
   let current: FlatNode | undefined = target;
@@ -58,6 +62,83 @@ function resolveRate(target: FlatNode, allNodes: readonly FlatNode[]) {
   }
 
   return null;
+}
+
+export async function insertActiveTimerForLockedNode(
+  tx: NodeTransaction,
+  userId: string,
+  node: FlatNode,
+  allNodes: readonly FlatNode[],
+  workDate: string,
+  startedAt: Date,
+) {
+  const [created] = await tx
+    .insert(activeTimers)
+    .values({
+      userId,
+      nodeId: node.id,
+      startedAt,
+      workDate,
+      hourlyRateCents: resolveTimerRate(node, allNodes),
+    })
+    .returning();
+  return created;
+}
+
+async function stopLockedTimer(
+  tx: NodeTransaction,
+  userId: string,
+  timer: typeof activeTimers.$inferSelect,
+  endedAt: Date,
+) {
+  const elapsedMilliseconds = endedAt.getTime() - timer.startedAt.getTime();
+  const durationSeconds = Math.max(1, Math.floor(elapsedMilliseconds / 1_000));
+  if (elapsedMilliseconds < 0 || durationSeconds > maximumDurationSeconds) {
+    throw new TimerMutationError(
+      durationSeconds > maximumDurationSeconds ? "timer-too-long" : "timer-not-found",
+    );
+  }
+  const recordedEndedAt =
+    elapsedMilliseconds < 1_000
+      ? new Date(timer.startedAt.getTime() + 1_000)
+      : endedAt;
+
+  const [entry] = await tx
+    .insert(timeEntries)
+    .values({
+      userId,
+      nodeId: timer.nodeId,
+      workDate: timer.workDate,
+      startedAt: timer.startedAt,
+      endedAt: recordedEndedAt,
+      durationSeconds,
+      hourlyRateCents: timer.hourlyRateCents,
+      notes: null,
+    })
+    .returning();
+  await tx
+    .delete(activeTimers)
+    .where(and(eq(activeTimers.userId, userId), eq(activeTimers.id, timer.id)));
+
+  return { timerId: timer.id, entry: toTimeEntryRecord(entry) };
+}
+
+export async function stopActiveTimerForLockedNode(
+  tx: NodeTransaction,
+  userId: string,
+  nodeId: string,
+  endedAt: Date,
+) {
+  const [timer] = await tx
+    .select()
+    .from(activeTimers)
+    .where(
+      and(eq(activeTimers.userId, userId), eq(activeTimers.nodeId, nodeId)),
+    )
+    .for("update")
+    .limit(1);
+
+  return timer ? stopLockedTimer(tx, userId, timer, endedAt) : null;
 }
 
 function isDuplicateTimer(error: unknown) {
@@ -91,7 +172,7 @@ export async function startTimerForUser(
           await insertActiveTimer({
             startedAt,
             workDate,
-            hourlyRateCents: resolveRate(node, nodes),
+            hourlyRateCents: resolveTimerRate(node, nodes),
           }),
         ),
     );
@@ -113,6 +194,7 @@ export async function startTimerForUser(
 
 export async function stopTimerForUser(userId: string, timerId: string, endedAt = new Date()) {
   return db.transaction(async (tx) => {
+    await lockOwnerNodes(tx, userId);
     const [timer] = await tx
       .select()
       .from(activeTimers)
@@ -122,36 +204,6 @@ export async function stopTimerForUser(userId: string, timerId: string, endedAt 
     if (!timer) {
       throw new TimerMutationError("timer-not-found");
     }
-
-    const elapsedMilliseconds = endedAt.getTime() - timer.startedAt.getTime();
-    const durationSeconds = Math.max(1, Math.floor(elapsedMilliseconds / 1_000));
-    if (elapsedMilliseconds < 0 || durationSeconds > maximumDurationSeconds) {
-      throw new TimerMutationError(
-        durationSeconds > maximumDurationSeconds ? "timer-too-long" : "timer-not-found",
-      );
-    }
-    const recordedEndedAt =
-      elapsedMilliseconds < 1_000
-        ? new Date(timer.startedAt.getTime() + 1_000)
-        : endedAt;
-
-    const [entry] = await tx
-      .insert(timeEntries)
-      .values({
-        userId,
-        nodeId: timer.nodeId,
-        workDate: timer.workDate,
-        startedAt: timer.startedAt,
-        endedAt: recordedEndedAt,
-        durationSeconds,
-        hourlyRateCents: timer.hourlyRateCents,
-        notes: null,
-      })
-      .returning();
-    await tx
-      .delete(activeTimers)
-      .where(and(eq(activeTimers.userId, userId), eq(activeTimers.id, timer.id)));
-
-    return { timerId: timer.id, entry: toTimeEntryRecord(entry) };
+    return stopLockedTimer(tx, userId, timer, endedAt);
   });
 }

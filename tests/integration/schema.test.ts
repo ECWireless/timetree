@@ -125,6 +125,60 @@ describe("initial PostgreSQL schema", () => {
     });
   });
 
+  it("enforces owner-scoped agent credentials with one key per root", async () => {
+    const ownerId = `user-${randomUUID()}`;
+    const otherUserId = `user-${randomUUID()}`;
+    await insertUser(ownerId);
+    await insertUser(otherUserId);
+    const rootNodeId = await insertNode(ownerId, 0);
+    const credentialId = randomUUID();
+    const values = [credentialId, ownerId, rootNodeId, "a".repeat(64)];
+
+    await client.query(
+      `insert into agent_api_keys (id, user_id, root_node_id, secret_hash)
+       values ($1, $2, $3, $4)`,
+      values,
+    );
+
+    await client.query("savepoint duplicate_agent_root");
+    await expect(
+      client.query(
+        `insert into agent_api_keys (user_id, root_node_id, secret_hash)
+         values ($1, $2, $3)`,
+        [ownerId, rootNodeId, "b".repeat(64)],
+      ),
+    ).rejects.toMatchObject({
+      code: "23505",
+      constraint: "agent_api_keys_user_root_unique",
+    });
+    await client.query("rollback to savepoint duplicate_agent_root");
+
+    await client.query("savepoint cross_owner_agent_root");
+    await expect(
+      client.query(
+        `insert into agent_api_keys (user_id, root_node_id, secret_hash)
+         values ($1, $2, $3)`,
+        [otherUserId, rootNodeId, "b".repeat(64)],
+      ),
+    ).rejects.toMatchObject({
+      code: "23503",
+      constraint: "agent_api_keys_root_owner_fk",
+    });
+    await client.query("rollback to savepoint cross_owner_agent_root");
+
+    await client.query("savepoint invalid_agent_hash");
+    await expect(
+      client.query(
+        `update agent_api_keys set secret_hash = $1 where id = $2`,
+        ["A".repeat(64), credentialId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "agent_api_keys_secret_hash_check",
+    });
+    await client.query("rollback to savepoint invalid_agent_hash");
+  });
+
   it("rejects an active timer owned by someone other than its node owner", async () => {
     const nodeOwnerId = `user-${randomUUID()}`;
     const otherUserId = `user-${randomUUID()}`;
