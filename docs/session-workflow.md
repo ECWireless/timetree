@@ -1,32 +1,27 @@
 # Session Workflow
 
-TimeTree is built phase by phase. Work may continue across different Codex
-sessions, branches, and pull requests, so each session must rebuild its context
-before implementation begins.
+TimeTree work may continue across different Codex sessions, branches, and pull
+requests, so each session must rebuild its context before implementation begins.
 
 ## Sources of truth
 
 - `SPEC.md` defines the approved product behavior, boundaries, and architecture.
-- `IMPLEMENTATION_PLAN.md` defines the active phase sequence, tasks, and
-  verification gates.
+- This workflow defines the planning, verification, review, and publication
+  process for each PR-sized unit.
 - Older attachments, handoffs, brainstorms, and chat history are context, not
   authority, unless the user explicitly promotes a decision into the spec.
-
-Update the implementation plan as phase work lands. Do not remove or archive the
-plan without explicit user approval.
 
 ## Start every session this way
 
 Before editing files:
 
-1. Read `SPEC.md` and `IMPLEMENTATION_PLAN.md`.
-2. Read this workflow and `docs/model-effort-workflow.md`.
-3. Recommend the lowest adequate effort level for the current task.
-4. Confirm the current branch and worktree state.
-5. Identify the directories likely to change and read every applicable nested
+1. Read `SPEC.md`, this workflow, and `docs/model-effort-workflow.md`.
+2. Recommend the lowest adequate effort level for the current task.
+3. Confirm the current branch and worktree state.
+4. Identify the directories likely to change and read every applicable nested
    `AGENTS.md` from the repository root down to those directories.
-6. Confirm the current phase or PR-sized unit with the user.
-7. Debrief the work:
+5. Confirm the current PR-sized unit with the user.
+6. Debrief the work:
    - intended user-visible outcome;
    - explicit non-goals and stopping point;
    - technical approach and any decisions still open;
@@ -34,23 +29,23 @@ Before editing files:
    - verification commands and manual QA;
    - commit and PR boundary;
    - proportional independent-review gate.
-8. Break the work into sequential tasks.
-9. Propose the intended commit sequence. If the phase would be too large for a
+7. Break the work into sequential tasks.
+8. Propose the intended commit sequence. If the work would be too large for a
    comfortably reviewable pull request, propose multiple PR-sized units instead.
-   Commit units are sequential delivery gates, not labels applied after all phase
+   Commit units are sequential delivery gates, not labels applied after all
    implementation is complete.
-10. Wait for explicit approval before beginning implementation.
+9. Wait for explicit approval before beginning implementation.
 
 Repository-wide workflow files establish the process and approval boundaries.
 Nested guidance may refine instructions for its subtree but may not weaken
 repository-wide scope, privacy, security, approval, or review requirements. Stop
 and resolve conflicting guidance before editing.
 
-## Phase planning checklist
+## Work planning checklist
 
 Before writing code, agree on:
 
-- phase goal and acceptance criteria;
+- unit goal and acceptance criteria;
 - user-visible outcome;
 - effort recommendation;
 - technical approach;
@@ -67,8 +62,8 @@ external service, datastore, or foundational pattern.
 
 ## Implementation rules
 
-- Keep work within the agreed phase or PR-sized unit.
-- Do not begin the next phase without a new debrief and approval.
+- Keep work within the agreed PR-sized unit.
+- Do not begin the next unit without a new debrief and approval.
 - Do not install dependencies until their purpose is agreed.
 - Do not start a development server unless the user expects a preview or it is
   required for agreed verification.
@@ -86,7 +81,7 @@ Before declaring a PR-sized unit complete or preparing a pull request:
 
 1. Run the agreed verification commands.
 2. Review the diff for correctness, regressions, accessibility, maintainability,
-   unnecessary complexity, and phase-scope compliance.
+   unnecessary complexity, and scope compliance.
 3. Perform a privacy and security pass:
    - confirm local environment files and secrets are ignored;
    - confirm no credentials, private hostnames, local absolute paths, private
@@ -103,18 +98,17 @@ Before declaring a PR-sized unit complete or preparing a pull request:
    interface changes, and resolve accepted findings.
 8. Rerun affected verification after QA-driven changes. Obtain focused
    independent re-review when those changes are material.
-9. Update completed implementation-plan items within the commit scope, then
-   review every change made since the independent-review snapshot. Material
+9. Review every change made since the independent-review snapshot. Material
    changes restart the affected verification and focused-review gates.
-10. Summarize what changed, verification and QA evidence, plan deviations, and remaining
-   work.
+10. Summarize what changed, verification and QA evidence, deviations, and
+    remaining work.
 11. Keep the PR boundary narrow enough to review comfortably.
 
 Use sequential commit units. Prepare only one commit's diff at a time; complete its
 automated verification, independent review, user-approved QA when applicable, and
 explicit commit approval before implementing the next commit unit. Do not batch
 multiple prepared commits into a shared review, QA, or approval cycle. Present the
-sequence during the phase debrief. After presenting the final evidence, obtain
+sequence during the unit debrief. After presenting the final evidence, obtain
 explicit approval, create the commit, and confirm it succeeded before implementing
 the next commit unit. Staging, committing, pushing, and pull-request actions retain
 their separate approval boundaries.
@@ -131,9 +125,9 @@ readiness—is the routine trigger. After accepted review findings are resolved,
 pause for the user-facing QA proposal and approval required above.
 
 Review every sequential commit unit against its intended base and scope. If a
-phase spans multiple commits or PRs, also review the integrated phase diff against
-the phase goal and acceptance criteria before the final phase commit or PR is
-declared ready.
+PR-sized unit includes multiple commit units, also review the integrated PR diff
+against the PR-sized unit's goal and acceptance criteria before declaring the
+PR ready.
 
 ### Reviewer count
 
@@ -173,9 +167,9 @@ Useful specialties include:
 7. Evaluate every finding rather than accepting it automatically.
 8. Apply agreed fixes and rerun affected verification.
 9. Request focused re-review of material fixes and disputed findings.
-10. Record only material deferred or unresolved findings in
-    `IMPLEMENTATION_PLAN.md`; do not create permanent artifacts for fully
-    resolved routine review.
+10. Report material deferred or unresolved findings to the user and record them
+    in a relevant durable project document only when approved. Do not create
+    permanent artifacts for fully resolved routine review.
 11. Present final review evidence and disposition to the user, who remains the
     merge authority.
 

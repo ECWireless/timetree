@@ -620,6 +620,3 @@ DashboardPage (server)
 - Release verification covers sign-in, node creation, manual entry, timer
   start/stop, correction of the disposable entry, and cleanup of disposable
   data.
-
-The implementation sequence is maintained separately in
-[`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md).

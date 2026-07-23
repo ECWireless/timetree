@@ -8,26 +8,25 @@ These instructions apply to the entire repository unless a more specific nested
 Before editing files:
 
 1. Read `SPEC.md`.
-2. Read `IMPLEMENTATION_PLAN.md`.
-3. Read `docs/session-workflow.md`.
-4. Read `docs/model-effort-workflow.md` and recommend the lowest adequate effort
+2. Read `docs/session-workflow.md`.
+3. Read `docs/model-effort-workflow.md` and recommend the lowest adequate effort
    for the task.
-5. Confirm the current branch and worktree state.
-6. Identify likely change locations and read every applicable nested
+4. Confirm the current branch and worktree state.
+5. Identify likely change locations and read every applicable nested
    `AGENTS.md`.
-7. Debrief the current phase or PR-sized unit with the user and obtain approval
+6. Debrief the current PR-sized unit with the user and obtain approval
    before implementation.
 
 `SPEC.md` is the product and architecture authority.
-`IMPLEMENTATION_PLAN.md` is the execution and verification authority. Resolve
-conflicts explicitly before editing.
+`docs/session-workflow.md` is the execution and verification process authority.
+Resolve conflicts explicitly before editing.
 
 Do not jump directly into scaffolding, dependency installation, schema changes,
 or implementation.
 
-## Phase alignment
+## Work alignment
 
-Before each phase or PR-sized unit, agree on:
+Before each PR-sized unit, agree on:
 
 - goal, non-goals, and stopping point;
 - user-visible outcome;
@@ -37,7 +36,7 @@ Before each phase or PR-sized unit, agree on:
 - commit and PR boundary;
 - proportional independent-review strategy.
 
-Do not begin the next phase without a new debrief and explicit approval.
+Do not begin the next unit without a new debrief and explicit approval.
 
 ## Git and publication
 
@@ -73,15 +72,14 @@ Before declaring a PR-sized unit complete or preparing its PR:
 6. Perform the approved QA when behavior or UI changed.
 7. Resolve accepted QA findings, rerun affected checks, and obtain focused
    independent re-review of material post-review changes.
-8. Update completed items in `IMPLEMENTATION_PLAN.md`, then review all changes
-   made since the independent-review snapshot.
+8. Review all changes made since the independent-review snapshot.
 9. Report verification and QA evidence, review disposition, deviations, and remaining
    scope to the user.
 
 Use sequential commit units: prepare only one commit's diff at a time, then complete
 its automated verification, review gate, user-approved QA when applicable, and
 explicit commit approval before beginning the next commit's implementation. Propose
-the intended sequence during the phase debrief. Do not batch several prepared commit
+the intended sequence during the unit debrief. Do not batch several prepared commit
 units into one review, QA, or approval cycle. After final evidence, obtain explicit
 approval, create the commit, and confirm it succeeded before implementing the next
 unit. Propose multiple PRs up front when the work would otherwise be too large for
