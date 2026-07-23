@@ -6,6 +6,22 @@ export function elapsedTimerSeconds(startedAt: string, nowMilliseconds: number) 
   return Math.max(0, Math.floor((nowMilliseconds - startedMilliseconds) / 1_000));
 }
 
+export function advanceClockFromSnapshot(
+  serverSnapshotMilliseconds: number,
+  clientSnapshotMilliseconds: number,
+  clientNowMilliseconds: number,
+) {
+  if (
+    !Number.isFinite(serverSnapshotMilliseconds)
+    || !Number.isFinite(clientSnapshotMilliseconds)
+    || !Number.isFinite(clientNowMilliseconds)
+  ) {
+    return serverSnapshotMilliseconds;
+  }
+  return serverSnapshotMilliseconds
+    + Math.max(0, clientNowMilliseconds - clientSnapshotMilliseconds);
+}
+
 export function formatTimerDuration(durationSeconds: number) {
   const safeSeconds = Number.isFinite(durationSeconds)
     ? Math.max(0, Math.floor(durationSeconds))

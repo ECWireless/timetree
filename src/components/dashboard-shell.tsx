@@ -66,7 +66,11 @@ import { formatHistoricalDuration } from "@/lib/time-entries/duration";
 import { formatRate, formatUsd, parseRateCents } from "@/lib/time-entries/money";
 import type { DashboardPeriodInput } from "@/lib/time-entries/period";
 import type { ActiveTimerRecord } from "@/lib/timers/contracts";
-import { elapsedTimerSeconds, formatTimerDuration } from "@/lib/timers/elapsed";
+import {
+  advanceClockFromSnapshot,
+  elapsedTimerSeconds,
+  formatTimerDuration,
+} from "@/lib/timers/elapsed";
 
 type DashboardShellProps = {
   activeTimers: ActiveTimerRecord[];
@@ -87,9 +91,17 @@ function useSharedTimerClock(activeTimers: readonly ActiveTimerRecord[], initial
     if (activeTimers.length === 0) {
       return;
     }
-    const interval = window.setInterval(() => setNowMilliseconds(Date.now()), 1_000);
+    const clientSnapshotMilliseconds = Date.now();
+    const updateClock = () => setNowMilliseconds(
+      advanceClockFromSnapshot(
+        initialNowMilliseconds,
+        clientSnapshotMilliseconds,
+        Date.now(),
+      ),
+    );
+    const interval = window.setInterval(updateClock, 1_000);
     return () => window.clearInterval(interval);
-  }, [activeTimers.length]);
+  }, [activeTimers.length, initialNowMilliseconds]);
 
   return nowMilliseconds;
 }
@@ -1416,12 +1428,12 @@ export function DashboardShell({
                 <small>
                   Total value
                   {summary.hasUnpricedTime ? (
-                    <span
+                    <button
+                      type="button"
                       className="tree-summary__info"
-                      role="img"
                       aria-label="About total value: Rates vary by node. Time without a rate is excluded from total value."
                       data-tooltip="Rates vary by node. Time without a rate is excluded from total value."
-                    >i</span>
+                    >i</button>
                   ) : null}
                 </small>
               </span>

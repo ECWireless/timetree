@@ -662,6 +662,16 @@ test.describe("tree period filter", () => {
         "aria-label",
         "Tree totals: 1h 55m total hours, $250.00 historical value, contains unpriced time",
       );
+      if (!isMobile) {
+        const valueInfo = page.getByRole("button", { name: "About total value" });
+        await valueInfo.focus();
+        await expect(valueInfo).toBeFocused();
+        await expect.poll(
+          () => valueInfo.evaluate(
+            (element) => getComputedStyle(element, "::after").opacity,
+          ),
+        ).toBe("1");
+      }
       await page.getByRole("button", { name: "Show completed" }).click();
 
       await monthInput.fill("2026-08");

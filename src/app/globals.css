@@ -717,7 +717,10 @@ textarea {
   place-items: center;
   border: 1px solid rgb(154 166 178 / 55%);
   border-radius: 50%;
+  padding: 0;
+  background: transparent;
   color: var(--color-muted);
+  font: inherit;
   font-size: 0.55rem;
   letter-spacing: 0;
   text-transform: none;
@@ -749,7 +752,9 @@ textarea {
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
-.tree-summary__info:hover::after {
+.tree-summary__info:hover::after,
+.tree-summary__info:focus::after,
+.tree-summary__info:focus-visible::after {
   opacity: 1;
   transform: translateY(0);
 }
@@ -2005,6 +2010,7 @@ textarea {
   }
 
   .active-timers-list {
+    max-height: min(14rem, 38dvh);
     width: 100%;
   }
 
@@ -2093,6 +2099,11 @@ textarea {
 
   .dashboard--selected .detail-pane {
     display: block;
+  }
+
+  .dashboard--timers .tree-pane,
+  .dashboard--timers .detail-pane {
+    padding-bottom: calc(min(14rem, 38dvh) + 1.5rem);
   }
 
   .mobile-back {
