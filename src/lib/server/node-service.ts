@@ -84,7 +84,7 @@ function requireNode(lockedNodes: readonly FlatNode[], nodeId: string) {
   return node;
 }
 
-function getSubtreeIds(lockedNodes: readonly FlatNode[], rootId: string) {
+export function getSubtreeIds(lockedNodes: readonly FlatNode[], rootId: string) {
   const childrenByParent = new Map<string, string[]>();
   for (const node of lockedNodes) {
     if (node.parentId !== null) {
