@@ -5,6 +5,8 @@ import type { Locator, Page } from "@playwright/test";
 import { makeSignature } from "better-auth/crypto";
 import { Pool } from "pg";
 
+import { formatHistoricalDuration } from "../../src/lib/time-entries/duration";
+
 const authSecret = "synthetic-auth-secret-for-browser-tests-only";
 const allowedEmail = "browser-user@example.test";
 const connectionString = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
@@ -403,6 +405,14 @@ test("builds and edits a URL-selected hierarchy", async ({ context, page, isMobi
     await expect(page.getByText("Early-stage research and interviews.")).toBeVisible();
 
     const discoveryUrl = page.url();
+    await page
+      .getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: "Website", exact: true })
+      .click();
+    await expect(page).toHaveURL(websiteUrl);
+    await page.getByPlaceholder("Search nodes").fill("Discovery");
+    await page.locator(".search-results button").filter({ hasText: "Discovery" }).click();
+    await expect(page).toHaveURL(discoveryUrl);
     await page.goBack();
     await expect(page).toHaveURL(websiteUrl);
     await expect(page.getByRole("heading", { level: 1, name: "Website" })).toBeVisible();
@@ -624,6 +634,10 @@ test.describe("tree period filter", () => {
         "aria-label",
         "Time totals: 10m rolled up, 0h direct, $50.00 historical value",
       );
+      await expect(page.locator(".tree-summary")).toHaveAttribute(
+        "aria-label",
+        "Tree totals: 10m total hours, $50.00 historical value",
+      );
       await expect(page.getByText("June history 50", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Load older entries" })).toBeVisible();
 
@@ -635,10 +649,18 @@ test.describe("tree period filter", () => {
         "aria-label",
         "Time totals: 1h 40m rolled up, $250.00 historical value",
       );
+      await expect(page.locator(".tree-summary")).toHaveAttribute(
+        "aria-label",
+        "Tree totals: 1h 40m total hours, $250.00 historical value",
+      );
       await page.getByRole("button", { name: "Show completed" }).click();
       await expect(compactMetrics).toHaveAttribute(
         "aria-label",
         "Time totals: 1h 55m rolled up, $250.00 historical value, contains entries with hourly rates and entries without hourly rates",
+      );
+      await expect(page.locator(".tree-summary")).toHaveAttribute(
+        "aria-label",
+        "Tree totals: 1h 55m total hours, $250.00 historical value, contains unpriced time",
       );
       await page.getByRole("button", { name: "Show completed" }).click();
 
@@ -1128,8 +1150,8 @@ test("identifies every running timer that blocks recursive completion", async ({
     await pool.query(
       `insert into active_timers (user_id, node_id, started_at, work_date)
        values
-         ($1, $2, now(), '2026-07-22'),
-         ($1, $3, now(), '2026-07-22')`,
+         ($1, $2, now() - interval '20 seconds', '2026-07-22'),
+         ($1, $3, now() - interval '10 seconds', '2026-07-22')`,
       [seeded.userId, rootId, childId],
     );
     await context.addCookies([
@@ -1144,6 +1166,12 @@ test("identifies every running timer that blocks recursive completion", async ({
     ]);
     await page.goto(`/?node=${rootId}`);
 
+    const firstElapsed = page.locator(".active-timer time").first();
+    await expect(firstElapsed).toHaveAttribute("aria-label", /Elapsed time 0:00:\d{2}/);
+    await expect(firstElapsed).not.toHaveAttribute("aria-label", "Elapsed time 0:00:00");
+    const initialElapsed = await firstElapsed.textContent();
+    await expect.poll(() => firstElapsed.textContent()).not.toBe(initialElapsed);
+
     await page.getByRole("button", { name: "Complete node" }).click();
 
     const completionAlert = page.locator('.detail-error[role="alert"]');
@@ -1153,6 +1181,205 @@ test("identifies every running timer that blocks recursive completion", async ({
     await expect(completionAlert).toContainText("Running: Timed project;");
     await expect(completionAlert).toContainText("Timed project / Running child");
     await expect(page.locator(".status-pill")).toHaveText("Active");
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test.describe("concurrent persistent timers", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("runs two timers, restores them, and assigns a crossed-month stop to its start date", async ({
+    context,
+    isMobile,
+    page,
+  }) => {
+    const seeded = await seedSession(allowedEmail, true);
+
+    try {
+      const firstId = await insertNode(seeded.userId, "Timer first", 0);
+      const secondId = await insertNode(seeded.userId, "Timer second", 1);
+      await pool.query(`update nodes set hourly_rate_cents = 10000 where id = $1`, [firstId]);
+      await context.addCookies([
+        {
+          name: "better-auth.session_token",
+          value: seeded.cookie,
+          domain: "127.0.0.1",
+          path: "/",
+          httpOnly: true,
+          sameSite: "Lax",
+        },
+      ]);
+      await page.clock.setFixedTime(new Date("2026-06-30T23:59:30-07:00"));
+      await page.goto(`/?node=${firstId}`);
+
+      await page.getByRole("button", { name: "Start timer" }).evaluate((button) => {
+        (button as HTMLButtonElement).click();
+        (button as HTMLButtonElement).click();
+      });
+      await expect(page.locator(".active-timer")).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Stop timer", exact: true })).toBeVisible();
+      await expect
+        .poll(async () => {
+          const result = await pool.query<{ count: string }>(
+            `select count(*) from active_timers where user_id = $1 and node_id = $2`,
+            [seeded.userId, firstId],
+          );
+          return result.rows[0].count;
+        })
+        .toBe("1");
+
+      if (isMobile) {
+        await page.getByRole("button", { name: "Back to tree" }).click();
+      }
+      await page.getByRole("button", { name: "Timer second", exact: true }).click();
+      await page.getByRole("button", { name: "Start timer" }).click();
+      await expect(page.locator(".active-timer")).toHaveCount(2);
+      await expect(page.locator(".node-row--running")).toHaveCount(2);
+      await expect(page.getByRole("button", { name: "Stop timer", exact: true })).toBeVisible();
+      await page.reload();
+      await expect(page.locator(".active-timer")).toHaveCount(2);
+      await expect(page.locator(".node-row--running")).toHaveCount(2);
+
+      await pool.query(
+        `update active_timers set started_at = '1900-01-01T00:00:00Z'
+         where user_id = $1 and node_id = $2`,
+        [seeded.userId, secondId],
+      );
+      await page.reload();
+      await page.getByRole("button", { name: "Stop timer for Timer second" }).click();
+      await expect(page.locator(".active-timers-error")).toHaveText("This timer is too long to save.");
+      await expect(page.locator(".active-timer")).toHaveCount(2);
+      await pool.query(
+        `update active_timers set started_at = now() - interval '60 seconds'
+         where user_id = $1 and node_id = $2`,
+        [seeded.userId, secondId],
+      );
+      await page.reload();
+
+      await page.getByRole("button", { name: "Stop timer", exact: true }).click();
+      await expect(page.locator(".active-timer")).toHaveCount(1);
+      await expect(page.locator(".entry-row")).toHaveCount(1);
+      await expect
+        .poll(async () => {
+          const result = await pool.query<{ count: string }>(
+            `select count(*) from time_entries where user_id = $1 and node_id = $2`,
+            [seeded.userId, secondId],
+          );
+          return result.rows[0].count;
+        })
+        .toBe("1");
+
+      const firstTimer = await pool.query<{ id: string }>(
+        `update active_timers
+         set started_at = '2026-06-30T23:59:30-07:00'::timestamptz
+         where user_id = $1 and node_id = $2
+         returning id`,
+        [seeded.userId, firstId],
+      );
+      expect(firstTimer.rows).toHaveLength(1);
+      await page.reload();
+      await page.locator(".active-timer__jump").filter({ hasText: "Timer first" }).click();
+      await expect(page).toHaveURL(`/?node=${firstId}`);
+      await page.getByRole("button", { name: "Stop timer", exact: true }).click();
+      await expect(page.locator(".active-timers-strip")).toHaveCount(0);
+
+      const stoppedEntry = await pool.query<{
+        duration_seconds: number;
+        work_date: string;
+      }>(
+        `select duration_seconds, work_date::text
+         from time_entries where user_id = $1 and node_id = $2`,
+        [seeded.userId, firstId],
+      );
+      expect(stoppedEntry.rows).toHaveLength(1);
+      expect(stoppedEntry.rows[0].work_date).toBe("2026-06-30");
+      const expectedDuration = formatHistoricalDuration(stoppedEntry.rows[0].duration_seconds);
+      const detailMetrics = page.locator(".detail-content > .node-metrics");
+      await expect(detailMetrics).toContainText(expectedDuration);
+
+      const rangeSelect = page.getByLabel("Time range");
+      await rangeSelect.selectOption("day");
+      await expect(page).toHaveURL(`/?node=${firstId}&period=day&day=2026-06-30`);
+      await expect(detailMetrics).toContainText(expectedDuration);
+      await rangeSelect.selectOption("month");
+      await expect(page).toHaveURL(`/?node=${firstId}&period=month&month=2026-06`);
+      await expect(detailMetrics).toContainText(expectedDuration);
+      await page.getByLabel("Filter month").fill("2026-07");
+      await expect(detailMetrics).toHaveAttribute(
+        "aria-label",
+        "Time totals: 0h rolled up, 0h direct, $0.00 historical value",
+      );
+      await rangeSelect.selectOption("all");
+      await expect(detailMetrics).toContainText(expectedDuration);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+});
+
+test("opens node details at the top after a pane has been scrolled", async ({
+  context,
+  isMobile,
+  page,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await insertNode(seeded.userId, `Scrollable node ${index + 1}`, index);
+    }
+    const firstNode = await pool.query<{ id: string }>(
+      `select id from nodes where user_id = $1 and title = 'Scrollable node 1'`,
+      [seeded.userId],
+    );
+    for (let index = 0; index < 18; index += 1) {
+      await pool.query(
+        `insert into time_entries
+           (user_id, node_id, work_date, duration_seconds, hourly_rate_cents, notes)
+         values ($1, $2, '2026-07-22', 60, 10000, $3)`,
+        [seeded.userId, firstNode.rows[0].id, `Scroll filler ${index + 1}`],
+      );
+    }
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto("/");
+    if (isMobile) {
+      await page.getByRole("button", { name: "Scrollable node 30", exact: true }).scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    } else {
+      await page.getByRole("button", { name: "Scrollable node 1", exact: true }).click();
+      await expect(page.getByRole("heading", { level: 1, name: "Scrollable node 1" })).toBeVisible();
+      await expect(page.locator(".entry-row")).toHaveCount(18);
+      await page.locator(".detail-pane").evaluate((pane) => pane.scrollTo(0, pane.scrollHeight));
+      expect(await page.locator(".detail-pane").evaluate((pane) => pane.scrollTop)).toBeGreaterThan(0);
+      await page.locator(".detail-pane").hover();
+      await page.mouse.wheel(0, 2_000);
+      await page.mouse.wheel(0, 2_000);
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    }
+    await page.getByRole("button", { name: "Scrollable node 30", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Scrollable node 30" })).toBeVisible();
+    if (isMobile) {
+      await expect(page.locator(".detail-content")).toBeFocused();
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+      await expect.poll(() => page.evaluate(() => window.scrollX)).toBe(0);
+    } else {
+      await expect.poll(() => page.locator(".detail-pane").evaluate((pane) => pane.scrollTop)).toBe(0);
+    }
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      ),
+    ).toBe(false);
   } finally {
     await seeded.cleanup();
   }

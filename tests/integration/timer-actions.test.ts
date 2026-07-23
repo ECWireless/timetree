@@ -108,7 +108,7 @@ describe("timer Server Actions", () => {
     expect(await stopTimer({ timerId: started.timer.id })).toMatchObject({
       ok: true,
       timerId: started.timer.id,
-      entryId: expect.any(String),
+      entry: expect.objectContaining({ id: expect.any(String), nodeId }),
     });
     expect(await stopTimer({ timerId: started.timer.id })).toEqual({
       ok: false,

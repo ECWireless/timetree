@@ -1,3 +1,5 @@
+import type { TimeEntryRecord } from "@/lib/time-entries/contracts";
+
 export type ActiveTimerRecord = {
   id: string;
   nodeId: string;
@@ -20,5 +22,5 @@ export type TimerActionResult =
   | { ok: false; message: string; fieldErrors?: Record<string, string[]> };
 
 export type StopTimerActionResult =
-  | { ok: true; timerId: string; entryId: string }
+  | { ok: true; timerId: string; entry: TimeEntryRecord }
   | { ok: false; message: string; fieldErrors?: Record<string, string[]> };

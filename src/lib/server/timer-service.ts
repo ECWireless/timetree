@@ -6,6 +6,7 @@ import { db } from "@/db/client";
 import { activeTimers, timeEntries } from "@/db/schema";
 import type { FlatNode } from "@/lib/nodes/tree";
 import { withLockedIncompleteNodeForUser } from "@/lib/server/node-service";
+import { toTimeEntryRecord } from "@/lib/server/time-entry-service";
 import type { ActiveTimerRecord } from "@/lib/timers/contracts";
 
 const maximumDurationSeconds = 2_147_483_647;
@@ -146,11 +147,11 @@ export async function stopTimerForUser(userId: string, timerId: string, endedAt 
         hourlyRateCents: timer.hourlyRateCents,
         notes: null,
       })
-      .returning({ id: timeEntries.id });
+      .returning();
     await tx
       .delete(activeTimers)
       .where(and(eq(activeTimers.userId, userId), eq(activeTimers.id, timer.id)));
 
-    return { timerId: timer.id, entryId: entry.id };
+    return { timerId: timer.id, entry: toTimeEntryRecord(entry) };
   });
 }

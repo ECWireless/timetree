@@ -45,7 +45,9 @@ export default async function Home({ searchParams }: HomeProps) {
     return (
       <DashboardShell
         email={dashboard.user.email}
+        initialNowMilliseconds={dashboard.readAtMilliseconds}
         initialEntryPage={initialEntryPage}
+        activeTimers={dashboard.activeTimers}
         nodes={dashboard.nodes}
         orderedNodes={dashboard.orderedNodes}
         period={periodUrl.period}

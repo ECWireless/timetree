@@ -28,6 +28,7 @@ import {
 } from "@dnd-kit/core";
 
 import { completeNode, createNode, moveNode, reopenNode, updateNode } from "@/app/actions/nodes";
+import { startTimer, stopTimer } from "@/app/actions/timers";
 import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
 import { ConfirmDeleteDialog, MoveNodeDialog } from "@/components/node-dialogs";
@@ -41,9 +42,11 @@ import {
   GripIcon,
   MoveIcon,
   PlusIcon,
+  PlayIcon,
   ReopenIcon,
   SearchIcon,
   TrashIcon,
+  StopIcon,
   WarningIcon,
 } from "@/components/icons";
 import { NodeTreeList } from "@/components/node-tree-list";
@@ -57,13 +60,18 @@ import {
   type NodeDropZone,
 } from "@/lib/nodes/presentation";
 import type { DashboardNode, FlatNode } from "@/lib/nodes/tree";
-import type { TimeEntryPage } from "@/lib/time-entries/contracts";
+import type { TimeEntryPage, TimeEntryRecord } from "@/lib/time-entries/contracts";
+import { toLocalWorkDate } from "@/lib/time-entries/dates";
 import { formatHistoricalDuration } from "@/lib/time-entries/duration";
 import { formatRate, formatUsd, parseRateCents } from "@/lib/time-entries/money";
 import type { DashboardPeriodInput } from "@/lib/time-entries/period";
+import type { ActiveTimerRecord } from "@/lib/timers/contracts";
+import { elapsedTimerSeconds, formatTimerDuration } from "@/lib/timers/elapsed";
 
 type DashboardShellProps = {
+  activeTimers: ActiveTimerRecord[];
   email: string;
+  initialNowMilliseconds: number;
   initialEntryPage: TimeEntryPage;
   nodes: FlatNode[];
   orderedNodes: DashboardNode[];
@@ -71,6 +79,47 @@ type DashboardShellProps = {
   periodRequiresCanonicalization: boolean;
   selectedNodeId?: string;
 };
+
+function useSharedTimerClock(activeTimers: readonly ActiveTimerRecord[], initialNowMilliseconds: number) {
+  const [nowMilliseconds, setNowMilliseconds] = useState(initialNowMilliseconds);
+
+  useEffect(() => {
+    if (activeTimers.length === 0) {
+      return;
+    }
+    const interval = window.setInterval(() => setNowMilliseconds(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [activeTimers.length]);
+
+  return nowMilliseconds;
+}
+
+function TimerElapsed({ timer, nowMilliseconds }: { timer: ActiveTimerRecord; nowMilliseconds: number }) {
+  const durationSeconds = elapsedTimerSeconds(timer.startedAt, nowMilliseconds);
+  const formatted = formatTimerDuration(durationSeconds);
+  return (
+    <time dateTime={`PT${durationSeconds}S`} aria-label={`Elapsed time ${formatted}`}>
+      <span aria-hidden="true">{formatted}</span>
+    </time>
+  );
+}
+
+function treeSummary(roots: readonly DashboardNode[], includeCompleted: boolean) {
+  let durationSeconds = 0;
+  let valueCents = BigInt(0);
+  let hasUnpricedTime = false;
+  for (const root of roots) {
+    const rollup = nodeRollup(root, includeCompleted);
+    durationSeconds += rollup.durationSeconds;
+    valueCents += BigInt(rollup.valueCents);
+    hasUnpricedTime ||= rollup.hasUnpricedTime;
+  }
+  return {
+    durationSeconds,
+    valueCents: valueCents.toString(),
+    hasUnpricedTime,
+  };
+}
 
 function rateInputValue(cents: number | null) {
   return cents === null ? "" : (cents / 100).toFixed(2);
@@ -618,6 +667,7 @@ function TreeRowDragContainer({
 }
 
 type NodeTreeProps = {
+  activeTimerByNodeId: ReadonlyMap<string, ActiveTimerRecord>;
   allNodes: DashboardNode[];
   roots: DashboardNode[];
   showCompleted: boolean;
@@ -634,9 +684,11 @@ type NodeTreeProps = {
   onExpandForDrag: (nodeId: string) => void;
   registerNodeButton: (nodeId: string, element: HTMLButtonElement | null) => void;
   dragPending: boolean;
+  nowMilliseconds: number;
 };
 
 function NodeTree({
+  activeTimerByNodeId,
   allNodes,
   roots,
   showCompleted,
@@ -653,6 +705,7 @@ function NodeTree({
   onExpandForDrag,
   registerNodeButton,
   dragPending,
+  nowMilliseconds,
 }: NodeTreeProps) {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [dropIntent, setDropIntent] = useState<NodeDropDestination | null>(null);
@@ -734,6 +787,7 @@ function NodeTree({
           const hiddenCompletedCount = showCompleted ? 0 : node.completedDescendantCount;
           const metricsId = `node-metrics-${node.id}`;
           const completedCountId = `node-completed-count-${node.id}`;
+          const activeTimer = activeTimerByNodeId.get(node.id);
 
           return (
             <>
@@ -747,6 +801,7 @@ function NodeTree({
                   "node-row",
                   node.id === selectedNodeId ? "node-row--selected" : "",
                   node.completedAt !== null ? "node-row--completed" : "",
+                  activeTimer ? "node-row--running" : "",
                 ].filter(Boolean).join(" ")}
                 style={{ "--node-depth": visualDepth } as CSSProperties}
               >
@@ -767,7 +822,11 @@ function NodeTree({
                 ref={(element) => registerNodeButton(node.id, element)}
                 className="node-select"
                 type="button"
-                aria-label={node.completedAt === null ? node.title : `${node.title}, completed`}
+                aria-label={[
+                  node.title,
+                  node.completedAt !== null ? "completed" : null,
+                  activeTimer ? "timer running" : null,
+                ].filter(Boolean).join(", ")}
                 aria-describedby={
                   hiddenCompletedCount > 0 ? `${metricsId} ${completedCountId}` : metricsId
                 }
@@ -776,6 +835,11 @@ function NodeTree({
               >
                 <span>
                   {node.title}
+                  {activeTimer ? (
+                    <small className="node-running-state">
+                      Running · <TimerElapsed timer={activeTimer} nowMilliseconds={nowMilliseconds} />
+                    </small>
+                  ) : null}
                   {node.completedAt !== null ? <small>Completed</small> : null}
                   {hiddenCompletedCount > 0 ? (
                     <small id={completedCountId} className="node-completed-count">
@@ -833,8 +897,67 @@ function NodeTree({
   );
 }
 
+function ActiveTimersStrip({
+  timers,
+  nodeById,
+  nowMilliseconds,
+  pendingTimerIds,
+  onJump,
+  onStop,
+  stopError,
+}: {
+  timers: readonly ActiveTimerRecord[];
+  nodeById: ReadonlyMap<string, DashboardNode>;
+  nowMilliseconds: number;
+  pendingTimerIds: ReadonlySet<string>;
+  onJump: (nodeId: string) => void;
+  onStop: (timerId: string) => void;
+  stopError: { timerId: string; message: string } | null;
+}) {
+  if (timers.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="active-timers-strip" aria-labelledby="active-timers-heading">
+      <h2 id="active-timers-heading" className="sr-only">Running timers</h2>
+      <div className="active-timers-list">
+        {timers.map((timer) => {
+          const node = nodeById.get(timer.nodeId);
+          if (!node) {
+            return null;
+          }
+          const pending = pendingTimerIds.has(timer.id);
+          return (
+            <article className="active-timer" key={timer.id}>
+              <button className="active-timer__jump" type="button" onClick={() => onJump(node.id)}>
+                <strong>{node.title}</strong>
+                <span>{formatBreadcrumb(node)}</span>
+              </button>
+              <TimerElapsed timer={timer} nowMilliseconds={nowMilliseconds} />
+              <button
+                className="icon-button active-timer__stop"
+                type="button"
+                aria-label={`Stop timer for ${node.title}`}
+                data-tooltip="Stop timer"
+                disabled={pending}
+                onClick={() => onStop(timer.id)}
+              >
+                <StopIcon />
+              </button>
+            </article>
+          );
+        })}
+      </div>
+      {stopError ? <p className="active-timers-error" role="alert">{stopError.message}</p> : null}
+    </section>
+  );
+}
+
 export function DashboardShell({
+  activeTimers,
   email,
+  initialNowMilliseconds,
   initialEntryPage,
   nodes,
   orderedNodes,
@@ -849,6 +972,11 @@ export function DashboardShell({
     [orderedNodes],
   );
   const selectedNode = selectedNodeId ? nodeById.get(selectedNodeId) : undefined;
+  const activeTimerByNodeId = useMemo(
+    () => new Map(activeTimers.map((timer) => [timer.nodeId, timer])),
+    [activeTimers],
+  );
+  const nowMilliseconds = useSharedTimerClock(activeTimers, initialNowMilliseconds);
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(selectedNode?.breadcrumb.slice(0, -1).map(({ id }) => id) ?? []),
   );
@@ -863,7 +991,12 @@ export function DashboardShell({
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [dragPending, setDragPending] = useState(false);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [pendingTimerIds, setPendingTimerIds] = useState<Set<string>>(() => new Set());
+  const [timerError, setTimerError] = useState<{ message: string; timerId?: string } | null>(null);
+  const [stoppedEntries, setStoppedEntries] = useState<TimeEntryRecord[]>([]);
+  const pendingTimerKeysRef = useRef(new Set<string>());
   const detailFocusRef = useRef<HTMLDivElement>(null);
+  const detailPaneRef = useRef<HTMLElement>(null);
   const nodeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocus = useRef<"detail" | "tree" | null>(null);
   const pendingScrollNodeId = useRef<string | null>(null);
@@ -880,6 +1013,10 @@ export function DashboardShell({
     () => filterCompletedTree(rootNodes, showCompleted),
     [rootNodes, showCompleted],
   );
+  const summary = useMemo(
+    () => treeSummary(visibleRoots, showCompleted),
+    [visibleRoots, showCompleted],
+  );
   const searchResults = useMemo(
     () => searchNodes(orderedNodes, searchText),
     [orderedNodes, searchText],
@@ -894,15 +1031,16 @@ export function DashboardShell({
   }, []);
 
   useEffect(() => {
-    if (!window.matchMedia("(max-width: 760px)").matches) {
-      pendingFocus.current = null;
-      return;
-    }
+    const isMobile = window.matchMedia("(max-width: 760px)").matches;
 
     const frame = window.requestAnimationFrame(() => {
       if (pendingFocus.current === "detail" && selectedNode) {
-        detailFocusRef.current?.focus();
-      } else if (pendingFocus.current === "tree" && !selectedNode && treeFocusNodeId.current) {
+        detailPaneRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        if (isMobile) {
+          detailFocusRef.current?.focus({ preventScroll: true });
+          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        }
+      } else if (isMobile && pendingFocus.current === "tree" && !selectedNode && treeFocusNodeId.current) {
         const treeButton = nodeButtonRefs.current.get(treeFocusNodeId.current);
         if (treeButton) {
           treeButton.focus();
@@ -996,6 +1134,60 @@ export function DashboardShell({
 
   function mutationSaved() {
     router.refresh();
+  }
+
+  async function beginTimer(nodeId: string) {
+    const pendingKey = `start:${nodeId}`;
+    if (pendingTimerKeysRef.current.has(pendingKey)) {
+      return;
+    }
+    pendingTimerKeysRef.current.add(pendingKey);
+    setPendingTimerIds((current) => new Set(current).add(pendingKey));
+    setTimerError(null);
+    try {
+      const result = await startTimer({ nodeId, workDate: toLocalWorkDate(new Date()) });
+      if (!result.ok) {
+        setTimerError({ message: result.fieldErrors?.workDate?.[0] ?? result.message });
+        return;
+      }
+      router.refresh();
+    } finally {
+      setPendingTimerIds((current) => {
+        const next = new Set(current);
+        next.delete(pendingKey);
+        return next;
+      });
+      pendingTimerKeysRef.current.delete(pendingKey);
+    }
+  }
+
+  async function endTimer(timerId: string) {
+    if (pendingTimerKeysRef.current.has(timerId)) {
+      return;
+    }
+    pendingTimerKeysRef.current.add(timerId);
+    setPendingTimerIds((current) => new Set(current).add(timerId));
+    setTimerError(null);
+    try {
+      const result = await stopTimer({ timerId });
+      if (!result.ok) {
+        setTimerError({ timerId, message: result.message });
+        router.refresh();
+        return;
+      }
+      setStoppedEntries((current) => [
+        result.entry,
+        ...current.filter((entry) => entry.id !== result.entry.id),
+      ]);
+      router.refresh();
+    } finally {
+      setPendingTimerIds((current) => {
+        const next = new Set(current);
+        next.delete(timerId);
+        return next;
+      });
+      pendingTimerKeysRef.current.delete(timerId);
+    }
   }
 
   function created(nodeId: string, parentId: string | null) {
@@ -1115,10 +1307,23 @@ export function DashboardShell({
 
   return (
     <main
-      className={selectedNode ? "dashboard dashboard--selected" : "dashboard"}
+      className={[
+        "dashboard",
+        selectedNode ? "dashboard--selected" : "",
+        activeTimers.length > 0 ? "dashboard--timers" : "",
+      ].filter(Boolean).join(" ")}
       aria-label="TimeTree workspace"
       data-testid="dashboard-page"
     >
+      <ActiveTimersStrip
+        timers={activeTimers}
+        nodeById={nodeById}
+        nowMilliseconds={nowMilliseconds}
+        pendingTimerIds={pendingTimerIds}
+        onJump={navigateToNode}
+        onStop={(timerId) => void endTimer(timerId)}
+        stopError={timerError?.timerId ? { timerId: timerError.timerId, message: timerError.message } : null}
+      />
       <header className="dashboard-header">
         <div className="wordmark wordmark--compact" aria-label="TimeTree">
           <BrandMark />
@@ -1197,8 +1402,30 @@ export function DashboardShell({
       <div className="dashboard-main">
         <section className="tree-pane" aria-labelledby="tree-heading">
           <div className="pane-heading">
-            <h1 ref={treeHeadingRef} id="tree-heading" tabIndex={-1}>Node tree</h1>
-            <p>Organize work at any depth.</p>
+            <div>
+              <h1 ref={treeHeadingRef} id="tree-heading" tabIndex={-1}>Node tree</h1>
+              <p>Organize work at any depth.</p>
+            </div>
+            <div
+              className={summary.hasUnpricedTime ? "tree-summary tree-summary--mixed" : "tree-summary"}
+              aria-label={`Tree totals: ${formatHistoricalDuration(summary.durationSeconds)} total hours, ${formatUsd(summary.valueCents)} historical value${summary.hasUnpricedTime ? ", contains unpriced time" : ""}`}
+            >
+              <span><strong>{formatHistoricalDuration(summary.durationSeconds)}</strong><small>Total hours</small></span>
+              <span>
+                <strong>{formatUsd(summary.valueCents)}</strong>
+                <small>
+                  Total value
+                  {summary.hasUnpricedTime ? (
+                    <span
+                      className="tree-summary__info"
+                      role="img"
+                      aria-label="About total value: Rates vary by node. Time without a rate is excluded from total value."
+                      data-tooltip="Rates vary by node. Time without a rate is excluded from total value."
+                    >i</span>
+                  ) : null}
+                </small>
+              </span>
+            </div>
           </div>
 
           {dragPending ? <p className="tree-move-status" role="status">Moving node…</p> : null}
@@ -1221,6 +1448,7 @@ export function DashboardShell({
           ) : (
             <div className="node-tree" aria-label="Work nodes">
               <NodeTree
+                activeTimerByNodeId={activeTimerByNodeId}
                 allNodes={orderedNodes}
                 roots={visibleRoots}
                 showCompleted={showCompleted}
@@ -1237,12 +1465,14 @@ export function DashboardShell({
                 onExpandForDrag={expandForDrag}
                 registerNodeButton={registerNodeButton}
                 dragPending={dragPending}
+                nowMilliseconds={nowMilliseconds}
               />
             </div>
           )}
         </section>
 
         <section
+          ref={detailPaneRef}
           className="detail-pane"
           aria-label={selectedNode ? `Node details for ${selectedNode.title}` : "Node details"}
         >
@@ -1279,12 +1509,54 @@ export function DashboardShell({
                 </span>
               </div>
               <NodeMetrics node={selectedNode} includeCompleted={showCompleted} />
+              <section className="timer-controls" aria-labelledby="timer-controls-heading">
+                <div>
+                  <h2 id="timer-controls-heading">Timer</h2>
+                  {activeTimerByNodeId.has(selectedNode.id) ? (
+                    <TimerElapsed
+                      timer={activeTimerByNodeId.get(selectedNode.id)!}
+                      nowMilliseconds={nowMilliseconds}
+                    />
+                  ) : (
+                    <p>Track live time on this node.</p>
+                  )}
+                </div>
+                {activeTimerByNodeId.has(selectedNode.id) ? (
+                  <button
+                    className="button button--timer-stop"
+                    type="button"
+                    disabled={pendingTimerIds.has(activeTimerByNodeId.get(selectedNode.id)!.id)}
+                    onClick={() => void endTimer(activeTimerByNodeId.get(selectedNode.id)!.id)}
+                  >
+                    <StopIcon /> Stop timer
+                  </button>
+                ) : selectedNode.completedAt === null ? (
+                  <button
+                    className="button button--timer-start"
+                    type="button"
+                    disabled={pendingTimerIds.has(`start:${selectedNode.id}`)}
+                    onClick={() => void beginTimer(selectedNode.id)}
+                  >
+                    <PlayIcon /> Start timer
+                  </button>
+                ) : null}
+              </section>
+              {timerError && !timerError.timerId ? <p className="detail-error" role="alert">{timerError.message}</p> : null}
               <div className="detail-fields">
                 <DescriptionEditor node={selectedNode} onSaved={mutationSaved} />
                 <RateEditor node={selectedNode} onSaved={mutationSaved} />
               </div>
               <TimeEntryLedger
-                initialPage={initialEntryPage}
+                key={`${selectedNode.id}:${stoppedEntries[0]?.id ?? "initial"}`}
+                initialPage={{
+                  ...initialEntryPage,
+                  entries: [
+                    ...stoppedEntries.filter((entry) => entry.nodeId === selectedNode.id),
+                    ...initialEntryPage.entries.filter(
+                      (entry) => !stoppedEntries.some((stopped) => stopped.id === entry.id),
+                    ),
+                  ],
+                }}
                 node={selectedNode}
                 nodes={orderedNodes}
                 onMutation={mutationSaved}

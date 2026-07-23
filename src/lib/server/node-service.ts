@@ -245,6 +245,7 @@ export async function getDashboardDataForUser(
     );
 
     return {
+      readAtMilliseconds: Date.now(),
       nodes: flatNodes,
       roots: tree.roots,
       orderedNodes: tree.ordered,

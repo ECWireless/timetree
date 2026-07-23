@@ -149,7 +149,7 @@ describe("persistent timer service", () => {
       `select node_id, work_date::text, started_at, ended_at, duration_seconds,
               hourly_rate_cents, notes
        from time_entries where id = $1`,
-      [stopped.entryId],
+      [stopped.entry.id],
     );
     expect(stored.rows[0]).toMatchObject({
       node_id: nodeId,
