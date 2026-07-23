@@ -263,8 +263,15 @@ describe("scoped agent API", () => {
     await pool.query(
       `insert into active_timers
          (user_id, node_id, started_at, work_date, hourly_rate_cents)
-       values ($1, $2, $3, '2026-07-23', 12500)`,
-      [tree.userId, tree.childNodeId, new Date("2026-07-23T10:00:00.000Z")],
+       values
+         ($1, $2, $4, '2026-07-23', 12500),
+         ($1, $3, $4, '2026-07-23', null)`,
+      [
+        tree.userId,
+        tree.childNodeId,
+        tree.siblingNodeId,
+        new Date("2026-07-23T10:00:00.000Z"),
+      ],
     );
 
     const response = await treeGET(

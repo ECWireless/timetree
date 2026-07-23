@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, max } from "drizzle-orm";
+import { and, asc, eq, max } from "drizzle-orm";
 
 import { activeTimers, nodes } from "@/db/schema";
 import type {
@@ -37,14 +37,13 @@ async function getScopedActiveTimers(context: AuthorizedAgentContext) {
   const timerRows = await context.tx
     .select()
     .from(activeTimers)
-    .where(
-      and(
-        eq(activeTimers.userId, context.userId),
-        inArray(activeTimers.nodeId, [...context.scopeNodeIds]),
-      ),
-    )
+    .where(eq(activeTimers.userId, context.userId))
     .orderBy(asc(activeTimers.startedAt), asc(activeTimers.id));
-  return new Map(timerRows.map((timer) => [timer.nodeId, timer]));
+  return new Map(
+    timerRows
+      .filter(({ nodeId }) => context.scopeNodeIds.has(nodeId))
+      .map((timer) => [timer.nodeId, timer]),
+  );
 }
 
 function toAgentNode(
