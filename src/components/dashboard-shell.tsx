@@ -35,12 +35,14 @@ import { SignOutButton } from "@/components/auth-buttons";
 import { BrandMark } from "@/components/brand-mark";
 import { ConfirmDeleteDialog, MoveNodeDialog } from "@/components/node-dialogs";
 import { DashboardPeriodFilter } from "@/components/dashboard-period-filter";
+import { NodeConstellation } from "@/components/node-constellation";
 import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   EyeIcon,
   EyeOffIcon,
+  GraphIcon,
   GripIcon,
   KeyIcon,
   MoveIcon,
@@ -89,6 +91,10 @@ type DashboardShellProps = {
   selectedNodeId?: string;
   timeTreeCanonicalOrigin: string | null;
 };
+
+type PendingDashboardFocus =
+  | { kind: "detail"; nodeId: string }
+  | { kind: "tree"; nodeId: string };
 
 function useSharedTimerClock(activeTimers: readonly ActiveTimerRecord[], initialNowMilliseconds: number) {
   const [nowMilliseconds, setNowMilliseconds] = useState(initialNowMilliseconds);
@@ -1005,6 +1011,7 @@ export function DashboardShell({
   const [creatingDetailChild, setCreatingDetailChild] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [showCompleted, setShowCompleted] = useState(false);
+  const [constellationOpen, setConstellationOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [agentAccessDialogOpen, setAgentAccessDialogOpen] = useState(false);
@@ -1024,10 +1031,9 @@ export function DashboardShell({
   const detailFocusRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLElement>(null);
   const nodeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
-  const pendingFocus = useRef<"detail" | "tree" | null>(null);
+  const pendingFocus = useRef<PendingDashboardFocus | null>(null);
   const pendingScrollNodeId = useRef<string | null>(null);
   const focusTreeAfterDelete = useRef(false);
-  const treeFocusNodeId = useRef<string | null>(null);
   const treeHeadingRef = useRef<HTMLHeadingElement>(null);
   const moveTriggerRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1061,25 +1067,37 @@ export function DashboardShell({
     const isMobile = window.matchMedia("(max-width: 760px)").matches;
 
     const frame = window.requestAnimationFrame(() => {
-      if (pendingFocus.current === "detail" && selectedNode) {
+      const pending = pendingFocus.current;
+      if (
+        pending?.kind === "detail" &&
+        selectedNode?.id === pending.nodeId &&
+        !constellationOpen
+      ) {
         detailPaneRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
         if (isMobile) {
           detailFocusRef.current?.focus({ preventScroll: true });
           window.scrollTo({ top: 0, left: 0, behavior: "auto" });
         }
-      } else if (isMobile && pendingFocus.current === "tree" && !selectedNode && treeFocusNodeId.current) {
-        const treeButton = nodeButtonRefs.current.get(treeFocusNodeId.current);
-        if (treeButton) {
-          treeButton.focus();
-        } else {
-          treeHeadingRef.current?.focus();
+        if (pendingFocus.current === pending) {
+          pendingFocus.current = null;
+        }
+      } else if (pending?.kind === "tree" && !selectedNode) {
+        if (isMobile) {
+          const treeButton = nodeButtonRefs.current.get(pending.nodeId);
+          if (treeButton) {
+            treeButton.focus();
+          } else {
+            treeHeadingRef.current?.focus();
+          }
+        }
+        if (pendingFocus.current === pending) {
+          pendingFocus.current = null;
         }
       }
-      pendingFocus.current = null;
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [selectedNode]);
+  }, [constellationOpen, selectedNode]);
 
   useEffect(() => {
     if (!focusTreeAfterDelete.current || selectedNode) {
@@ -1109,9 +1127,10 @@ export function DashboardShell({
     setAgentAccessNotice(null);
     setCreatingTreeChildFor(null);
     setCreatingDetailChild(false);
+    setConstellationOpen(false);
     const target = nodeId ? nodeById.get(nodeId) : undefined;
     if (target) {
-      pendingFocus.current = "detail";
+      pendingFocus.current = { kind: "detail", nodeId: target.id };
       setExpanded((current) => {
         const next = new Set(current);
         for (const ancestor of target.breadcrumb.slice(0, -1)) {
@@ -1119,6 +1138,10 @@ export function DashboardShell({
         }
         return next;
       });
+    }
+
+    if ((nodeId ?? null) === searchParams.get("node")) {
+      return;
     }
 
     const next = new URLSearchParams(searchParams.toString());
@@ -1137,8 +1160,7 @@ export function DashboardShell({
     }
 
     setAgentAccessNotice(null);
-    treeFocusNodeId.current = selectedNode.id;
-    pendingFocus.current = "tree";
+    pendingFocus.current = { kind: "tree", nodeId: selectedNode.id };
     setCreatingDetailChild(false);
     setExpanded((current) => {
       const next = new Set(current);
@@ -1227,7 +1249,7 @@ export function DashboardShell({
     setCreatingRoot(false);
     setCreatingTreeChildFor(null);
     setCreatingDetailChild(false);
-    pendingFocus.current = "detail";
+    setConstellationOpen(false);
     navigateToNode(nodeId);
   }
 
@@ -1248,8 +1270,15 @@ export function DashboardShell({
       setShowCompleted(true);
     }
     setSearchText("");
+    setConstellationOpen(false);
     pendingScrollNodeId.current = node.id;
     navigateToNode(node.id);
+  }
+
+  function openNodeFromConstellation(nodeId: string) {
+    setConstellationOpen(false);
+    pendingScrollNodeId.current = nodeId;
+    navigateToNode(nodeId);
   }
 
   async function changeCompletion() {
@@ -1339,7 +1368,8 @@ export function DashboardShell({
     <main
       className={[
         "dashboard",
-        selectedNode ? "dashboard--selected" : "",
+        selectedNode && !constellationOpen ? "dashboard--selected" : "",
+        constellationOpen ? "dashboard--constellation" : "",
         activeTimers.length > 0 ? "dashboard--timers" : "",
       ].filter(Boolean).join(" ")}
       aria-label="TimeTree workspace"
@@ -1402,7 +1432,7 @@ export function DashboardShell({
         />
         <div className="toolbar-actions">
           <button
-            className="icon-button"
+            className="icon-button icon-button--toggle"
             type="button"
             aria-label="Show completed"
             aria-pressed={showCompleted}
@@ -1412,11 +1442,29 @@ export function DashboardShell({
             {showCompleted ? <EyeOffIcon /> : <EyeIcon />}
           </button>
           <button
+            className="icon-button icon-button--toggle"
+            type="button"
+            aria-label="Node constellation"
+            aria-pressed={constellationOpen}
+            data-tooltip={constellationOpen ? "Return to node tree" : "Open node constellation"}
+            onClick={() => {
+              setCreatingRoot(false);
+              setCreatingTreeChildFor(null);
+              setCreatingDetailChild(false);
+              setConstellationOpen((current) => !current);
+            }}
+          >
+            <GraphIcon />
+          </button>
+          <button
             className="icon-button icon-button--primary"
             type="button"
             aria-label="New root node"
             data-tooltip="New root node"
-            onClick={() => setCreatingRoot(true)}
+            onClick={() => {
+              setConstellationOpen(false);
+              setCreatingRoot(true);
+            }}
           >
             <PlusIcon />
           </button>
@@ -1429,6 +1477,19 @@ export function DashboardShell({
         </div>
       ) : null}
 
+      {constellationOpen ? (
+        <NodeConstellation
+          activeTimers={activeTimers}
+          nodes={orderedNodes}
+          showCompleted={showCompleted}
+          onCreateRoot={() => {
+            setConstellationOpen(false);
+            setCreatingRoot(true);
+          }}
+          onOpenNode={openNodeFromConstellation}
+          onShowCompleted={() => setShowCompleted(true)}
+        />
+      ) : (
       <div className="dashboard-main">
         <section className="tree-pane" aria-labelledby="tree-heading">
           <div className="pane-heading">
@@ -1705,6 +1766,7 @@ export function DashboardShell({
           )}
         </section>
       </div>
+      )}
       {selectedNode && moveDialogOpen ? (
         <MoveNodeDialog
           node={selectedNode}
