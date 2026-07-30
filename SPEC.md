@@ -68,6 +68,45 @@ The MVP does not include:
 - Bulk editing.
 - A recycle bin or general soft-delete system.
 
+## Post-MVP extensions
+
+Features in this section are approved after the completed `v0.1.0` MVP. They do
+not retroactively change the MVP scope or its historical non-goals.
+
+### Node Constellation
+
+The authenticated dashboard adds a read-only, full-workspace graphical view of
+the current node hierarchy:
+
+- A graph icon beside "Show completed" and "New root node" switches between the
+  primary tree workspace and Node Constellation without changing the URL.
+- The existing period filter and "Show completed" state apply to the
+  constellation. Hidden completed branches remain absent until the owner shows
+  completed nodes.
+- Each visible node is a bubble connected to its parent. Bubble size represents
+  the node's rolled-up historical duration for the current period and completion
+  visibility, using bounded square-root scaling so zero-hour nodes remain
+  discoverable and outliers do not consume the view.
+- Root nodes use the brand blue, running timers receive a restrained yellow
+  treatment, and completed nodes are visually muted. A compact legend explains
+  the root, completion, and sizing encodings without overloading yellow focus
+  and selection cues with another label.
+- The layout is force-directed, settles instead of animating indefinitely, and
+  can be reset. The owner may locally nudge bubbles, zoom, and pan without
+  changing node order, parentage, or any persisted record.
+- Choosing a bubble opens an in-view read-only summary with its breadcrumb,
+  direct duration, rolled-up duration, completion state, and an "Open in tree"
+  action. Opening the node leaves the constellation and uses the existing
+  selected-node navigation.
+- Graph nodes are keyboard-focusable and have complete accessible names.
+  Reduced-motion preferences use a stable layout without continuous animation.
+- The view remains usable at the supported desktop and mobile widths. Empty and
+  completed-only states retain clear recovery actions.
+
+Node Constellation does not add graph editing, persistent coordinates, new
+analytics, export, sharing, stored aggregates, routes, database fields, or
+server operations. The tree remains TimeTree's primary editing interface.
+
 ## Scoped agent timekeeping
 
 TimeTree supports a narrow bearer-key integration for coding agents that record
@@ -852,6 +891,7 @@ DashboardPage (server)
     ├── ActiveTimersStrip
     ├── DashboardToolbar
     │   └── PeriodFilter
+    ├── NodeConstellation
     ├── TreePane
     │   └── NodeTree
     │       ├── NodeRow
@@ -873,6 +913,8 @@ DashboardPage (server)
 - The server page provides authoritative dashboard data and the selected node's
   first page of entries.
 - Expanded nodes, search text, and "Show completed" are ephemeral client state.
+- Tree/constellation mode, constellation focus, and local viewport placement are
+  ephemeral client state.
 - The application does not add Redux or React Query. Agent setup and
   credentials are not persisted in browser-local storage.
 - Selecting a node updates the URL and loads its first entry page from the

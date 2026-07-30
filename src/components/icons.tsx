@@ -36,6 +36,34 @@ export function PlusIcon(props: IconProps) {
   );
 }
 
+export function MinusIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 12h14" />
+    </Icon>
+  );
+}
+
+export function GraphIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m7.3 10.9 7.6-3.8M7.3 13.1l7.6 3.8" />
+      <circle cx="5" cy="12" r="2.4" />
+      <circle cx="17" cy="6" r="2.25" />
+      <circle cx="17" cy="18" r="2.25" />
+    </Icon>
+  );
+}
+
+export function ResetIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 7v5h5" />
+      <path d="M5.6 16.5A8 8 0 1 0 6 7L4 9" />
+    </Icon>
+  );
+}
+
 export function EyeIcon(props: IconProps) {
   return (
     <Icon {...props}>

@@ -135,6 +135,48 @@ async function touchDragNodeTo(
     .toBe("touch");
 }
 
+async function nudgeConstellationBubble(page: Page, bubble: Locator, useTouch: boolean) {
+  const bounds = await bubble.boundingBox();
+  expect(bounds).not.toBeNull();
+  const start = {
+    x: bounds!.x + bounds!.width / 2,
+    y: bounds!.y + bounds!.height / 2,
+  };
+  const end = { x: start.x + 48, y: start.y + 32 };
+
+  if (!useTouch) {
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 6 });
+    await page.mouse.up();
+    return;
+  }
+
+  const session = await page.context().newCDPSession(page);
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ ...start, id: 1, radiusX: 1, radiusY: 1, force: 1 }],
+  });
+  for (let step = 1; step <= 8; step += 1) {
+    const progress = step / 8;
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [
+        {
+          x: start.x + (end.x - start.x) * progress,
+          y: start.y + (end.y - start.y) * progress,
+          id: 1,
+          radiusX: 1,
+          radiusY: 1,
+          force: 1,
+        },
+      ],
+    });
+  }
+  await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await session.detach();
+}
+
 async function dragNodeWithAutoScroll(page: Page, sourceName: string, targetName: string) {
   const pane = page.locator(".tree-pane");
   const sourceRow = page.getByRole("button", { name: sourceName, exact: true }).locator("..");
@@ -544,6 +586,147 @@ test("changes historical rollups when completed nodes are shown", async ({ conte
       "aria-label",
       "Time totals: 1h 30m rolled up, 1h direct, $200.00 historical value",
     );
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("explores the node constellation without changing the tree", async ({
+  context,
+  isMobile,
+  page,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    const rootId = await insertNode(seeded.userId, "Map root", 0);
+    const childId = await insertNode(seeded.userId, "Map child", 0, rootId);
+    const completedId = await insertNode(
+      seeded.userId,
+      "Map completed",
+      1,
+      rootId,
+      true,
+    );
+    await pool.query(
+      `insert into time_entries
+         (user_id, node_id, work_date, duration_seconds, hourly_rate_cents)
+       values
+         ($1, $2, '2026-07-22', 3600, 10000),
+         ($1, $3, '2026-07-22', 7200, 10000),
+         ($1, $4, '2026-07-22', 1800, 10000)`,
+      [seeded.userId, rootId, childId, completedId],
+    );
+    await pool.query(
+      `insert into active_timers (user_id, node_id, started_at, work_date)
+       values ($1, $2, now() - interval '5 minutes', '2026-07-22')`,
+      [seeded.userId, childId],
+    );
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.goto(`/?node=${childId}`);
+
+    const constellationToggle = page.getByRole("button", { name: "Node constellation" });
+    await expect(constellationToggle).toHaveAttribute("aria-pressed", "false");
+    await constellationToggle.click();
+    await expect(constellationToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("heading", { level: 1, name: "Node Constellation" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Node tree" })).toHaveCount(0);
+
+    const rootBubble = page.locator(".constellation-node").filter({ hasText: "Map root" });
+    const childBubble = page.locator(".constellation-node").filter({ hasText: "Map child" });
+    await expect(rootBubble).toBeVisible();
+    await expect(childBubble).toBeVisible();
+    await expect(page.getByRole("button", { name: /Map completed:/ })).toHaveCount(0);
+    await expect(childBubble).toHaveClass(/constellation-node--running/);
+
+    await rootBubble.focus();
+    await expect(rootBubble).toBeFocused();
+    const card = page.locator(".constellation-card");
+    await expect(card).toContainText("Map root");
+    await expect(card).toContainText("3h");
+    await rootBubble.press("Enter");
+    const openInTree = card.getByRole("button", { name: "Open in tree" });
+    await expect(openInTree).toBeFocused();
+    await openInTree.press("Enter");
+    await expect(page).toHaveURL(new RegExp(`node=${rootId}`));
+    await expect(constellationToggle).toHaveAttribute("aria-pressed", "false");
+    if (isMobile) {
+      await expect(page.locator('[aria-label="Map root details"]')).toBeFocused();
+    }
+    await constellationToggle.click();
+    await rootBubble.focus();
+    await rootBubble.press("Enter");
+    await expect(card.getByRole("button", { name: "Open in tree" })).toBeFocused();
+    await card.getByRole("button", { name: "Open in tree" }).press("Enter");
+    if (isMobile) {
+      await expect(page.locator('[aria-label="Map root details"]')).toBeFocused();
+    }
+    await constellationToggle.click();
+
+    await page.getByRole("button", { name: "Zoom in" }).click();
+    await expect(page.getByRole("button", { name: "Reset constellation" })).toBeEnabled();
+    await page.getByRole("button", { name: "Reset constellation" }).click();
+
+    await page.getByRole("button", { name: "Show completed" }).click();
+    await expect(page.getByRole("button", { name: /Map completed: 30m rolled up/ })).toBeVisible();
+    await expect(rootBubble).toHaveAttribute(
+      "aria-label",
+      "Map root: 3h 30m rolled up, 1h direct, active",
+    );
+
+    await page.getByRole("button", { name: "Map child Map root / Map child" }).click();
+    await expect(page).toHaveURL(new RegExp(`node=${childId}`));
+    await expect(constellationToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("heading", { level: 1, name: "Map child" })).toBeVisible();
+    await expect(
+      page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      ),
+    ).resolves.toBe(false);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("keeps constellation nudging available with reduced motion", async ({
+  context,
+  isMobile,
+  page,
+}) => {
+  const seeded = await seedSession(allowedEmail, true);
+
+  try {
+    await insertNode(seeded.userId, "Still root", 0);
+    await context.addCookies([
+      {
+        name: "better-auth.session_token",
+        value: seeded.cookie,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Node constellation" }).click();
+
+    const bubble = page.locator(".constellation-node").filter({ hasText: "Still root" });
+    await expect(bubble).toBeVisible();
+    await page.waitForTimeout(150);
+    const initialTransform = await bubble.getAttribute("transform");
+    await nudgeConstellationBubble(page, bubble, isMobile);
+
+    await expect(bubble).not.toHaveAttribute("transform", initialTransform!);
   } finally {
     await seeded.cleanup();
   }
