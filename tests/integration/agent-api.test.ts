@@ -18,6 +18,9 @@ const userIds = new Set<string>();
 let treeGET: typeof import(
   "../../src/app/api/agent/v1/tree/route"
 ).GET;
+let reportGET: typeof import(
+  "../../src/app/api/agent/v1/report/route"
+).GET;
 let nodesPOST: typeof import(
   "../../src/app/api/agent/v1/nodes/route"
 ).POST;
@@ -136,6 +139,20 @@ async function readJson(response: Response) {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
+async function insertTimeEntry(
+  userId: string,
+  nodeId: string,
+  workDate: string,
+  durationSeconds: number,
+) {
+  await pool.query(
+    `insert into time_entries
+       (user_id, node_id, work_date, duration_seconds)
+     values ($1, $2, $3, $4)`,
+    [userId, nodeId, workDate, durationSeconds],
+  );
+}
+
 describe("scoped agent API", () => {
   beforeAll(async () => {
     vi.stubEnv(
@@ -149,6 +166,9 @@ describe("scoped agent API", () => {
 
     ({ GET: treeGET } = await import(
       "../../src/app/api/agent/v1/tree/route"
+    ));
+    ({ GET: reportGET } = await import(
+      "../../src/app/api/agent/v1/report/route"
     ));
     ({ POST: nodesPOST } = await import(
       "../../src/app/api/agent/v1/nodes/route"
@@ -322,6 +342,159 @@ describe("scoped agent API", () => {
     expect(serialized).not.toContain(tree.credentialId);
     expect(serialized).not.toContain("hourlyRate");
     expect(serialized).not.toContain("Private");
+  });
+
+  it("authenticates before validating report dates and returns bounded no-store errors", async () => {
+    const tree = await seedTree();
+    const unauthenticated = await reportGET(
+      new Request("http://localhost/api/agent/v1/report?from=bad&to=worse"),
+    );
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("cache-control")).toBe("no-store");
+    expect(await readJson(unauthenticated)).toEqual({
+      code: "invalid-key",
+      message: "The agent API key is missing or invalid.",
+    });
+
+    const missing = await reportGET(
+      new Request("http://localhost/api/agent/v1/report", {
+        headers: authorizationHeaders(tree.apiKey),
+      }),
+    );
+    expect(missing.status).toBe(400);
+    expect(missing.headers.get("cache-control")).toBe("no-store");
+    expect(await readJson(missing)).toMatchObject({
+      code: "invalid-request",
+      fields: {
+        from: ["Use one valid date in YYYY-MM-DD format."],
+        to: ["Use one valid date in YYYY-MM-DD format."],
+      },
+    });
+
+    const duplicate = await reportGET(
+      new Request(
+        "http://localhost/api/agent/v1/report?from=2026-01-01&from=2026-02-01&to=2026-08-01",
+        { headers: authorizationHeaders(tree.apiKey) },
+      ),
+    );
+    expect(duplicate.status).toBe(400);
+    expect(await readJson(duplicate)).toMatchObject({
+      fields: { from: ["Use one valid date in YYYY-MM-DD format."] },
+    });
+
+    const reversed = await reportGET(
+      new Request(
+        "http://localhost/api/agent/v1/report?from=2026-08-01&to=2026-08-01",
+        { headers: authorizationHeaders(tree.apiKey) },
+      ),
+    );
+    expect(reversed.status).toBe(400);
+    expect(await readJson(reversed)).toMatchObject({
+      fields: { to: ["Choose a date after from."] },
+    });
+  });
+
+  it("reports scoped direct historical durations across a range with current completion state", async () => {
+    const tree = await seedTree();
+    const otherUserId = `agent-report-other-user-${randomUUID()}`;
+    userIds.add(otherUserId);
+    await pool.query(
+      `insert into "user" (id, name, email, email_verified)
+       values ($1, 'Synthetic Other User', $2, true)`,
+      [otherUserId, `agent-report-other-${randomUUID()}@example.test`],
+    );
+    const otherRootNodeId = await insertNode(otherUserId, {
+      title: "Other user root",
+      position: 0,
+    });
+    await insertTimeEntry(tree.userId, tree.rootNodeId, "2025-12-31", 11);
+    await insertTimeEntry(tree.userId, tree.rootNodeId, "2026-01-01", 60);
+    await insertTimeEntry(tree.userId, tree.rootNodeId, "2026-03-15", 100);
+    await insertTimeEntry(tree.userId, tree.childNodeId, "2026-03-15", 200);
+    await insertTimeEntry(tree.userId, tree.childNodeId, "2026-03-15", 300);
+    await insertTimeEntry(tree.userId, tree.completedNodeId, "2026-06-30", 600);
+    await insertTimeEntry(tree.userId, tree.siblingNodeId, "2026-04-01", 900);
+    await insertTimeEntry(otherUserId, otherRootNodeId, "2026-05-01", 1_000);
+    await insertTimeEntry(tree.userId, tree.rootNodeId, "2026-08-01", 22);
+    await pool.query(
+      `insert into active_timers
+         (user_id, node_id, started_at, work_date)
+       values ($1, $2, $3, '2026-07-15')`,
+      [tree.userId, tree.rootNodeId, new Date("2026-07-15T10:00:00.000Z")],
+    );
+
+    const response = await reportGET(
+      new Request(
+        "http://localhost/api/agent/v1/report?from=2026-01-01&to=2026-08-01",
+        { headers: authorizationHeaders(tree.apiKey) },
+      ),
+    );
+    const body = await readJson(response);
+    const expectedRows = [
+      {
+        nodeId: tree.rootNodeId,
+        workDate: "2026-01-01",
+        durationSeconds: 60,
+        completed: false,
+      },
+      {
+        nodeId: tree.rootNodeId,
+        workDate: "2026-03-15",
+        durationSeconds: 100,
+        completed: false,
+      },
+      {
+        nodeId: tree.childNodeId,
+        workDate: "2026-03-15",
+        durationSeconds: 500,
+        completed: false,
+      },
+      {
+        nodeId: tree.completedNodeId,
+        workDate: "2026-06-30",
+        durationSeconds: 600,
+        completed: true,
+      },
+    ].sort(
+      (left, right) =>
+        left.workDate.localeCompare(right.workDate) ||
+        left.nodeId.localeCompare(right.nodeId),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(body).toEqual({
+      rootId: tree.rootNodeId,
+      rows: expectedRows,
+    });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain(tree.siblingNodeId);
+    expect(serialized).not.toContain(otherRootNodeId);
+    expect(serialized).not.toContain("hourly");
+    expect(serialized).not.toContain("notes");
+    expect(serialized).not.toContain("2026-07-15");
+    expect(serialized).not.toContain("2026-08-01");
+  });
+
+  it("returns an empty report when the scoped range has no historical entries", async () => {
+    const tree = await seedTree();
+    await pool.query(
+      `insert into active_timers
+         (user_id, node_id, started_at, work_date)
+       values ($1, $2, $3, '2026-03-01')`,
+      [tree.userId, tree.childNodeId, new Date("2026-03-01T10:00:00.000Z")],
+    );
+
+    const response = await reportGET(
+      new Request(
+        "http://localhost/api/agent/v1/report?from=2026-01-01&to=2026-08-01",
+        { headers: authorizationHeaders(tree.apiKey) },
+      ),
+    );
+    expect(await readJson(response)).toEqual({
+      rootId: tree.rootNodeId,
+      rows: [],
+    });
   });
 
   it("follows nodes moved out of and into the current subtree", async () => {

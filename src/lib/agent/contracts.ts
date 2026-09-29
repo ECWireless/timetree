@@ -56,6 +56,18 @@ export type AgentTreeResponse = {
   nodes: AgentNode[];
 };
 
+export type AgentReportRow = {
+  nodeId: string;
+  workDate: string;
+  durationSeconds: number;
+  completed: boolean;
+};
+
+export type AgentReportResponse = {
+  rootId: string;
+  rows: AgentReportRow[];
+};
+
 export type CreateAgentNodeInput = {
   id: string;
   parentId: string;

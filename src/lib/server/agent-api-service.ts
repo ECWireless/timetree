@@ -1,11 +1,12 @@
 import "server-only";
 
-import { and, asc, eq, max } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, max, sql } from "drizzle-orm";
 
-import { activeTimers, nodes } from "@/db/schema";
+import { activeTimers, nodes, timeEntries } from "@/db/schema";
 import type {
   AgentActiveTimer,
   AgentNode,
+  AgentReportResponse,
   AgentTreeResponse,
   CreateAgentNodeInput,
   CreateAgentNodeResponse,
@@ -101,6 +102,48 @@ export async function getAgentTree(
     ).map((node) =>
       toAgentNode(node, context.rootNodeId, timers.get(node.id) ?? null),
     ),
+  };
+}
+
+export async function getAgentReport(
+  context: AuthorizedAgentContext,
+  from: string,
+  to: string,
+): Promise<AgentReportResponse> {
+  const rows = await context.tx
+    .select({
+      nodeId: timeEntries.nodeId,
+      workDate: timeEntries.workDate,
+      durationSeconds: sql<string>`sum(${timeEntries.durationSeconds}::bigint)::text`,
+    })
+    .from(timeEntries)
+    .where(
+      and(
+        eq(timeEntries.userId, context.userId),
+        inArray(timeEntries.nodeId, [...context.scopeNodeIds]),
+        gte(timeEntries.workDate, from),
+        lt(timeEntries.workDate, to),
+      ),
+    )
+    .groupBy(timeEntries.nodeId, timeEntries.workDate)
+    .orderBy(asc(timeEntries.workDate), asc(timeEntries.nodeId));
+  const completedNodeIds = new Set(
+    context.nodes
+      .filter(
+        (node) =>
+          context.scopeNodeIds.has(node.id) && node.completedAt !== null,
+      )
+      .map(({ id }) => id),
+  );
+
+  return {
+    rootId: context.rootNodeId,
+    rows: rows.map((row) => ({
+      nodeId: row.nodeId,
+      workDate: row.workDate,
+      durationSeconds: Number(row.durationSeconds),
+      completed: completedNodeIds.has(row.nodeId),
+    })),
   };
 }
 

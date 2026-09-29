@@ -202,8 +202,8 @@ the key in generated harness instructions.
 
 ### Agent API
 
-The initial versioned API is rooted at `/api/agent/v1` on the configured
-canonical public origin. It provides four operations.
+The versioned API is rooted at `/api/agent/v1` on the configured canonical
+public origin. It provides five operations.
 
 The API exposes only these representations:
 
@@ -211,6 +211,9 @@ The API exposes only these representations:
   `completedAt`, and nullable `activeTimer`.
 - An active timer contains only `startedAt` and `workDate`.
 - The tree response contains the authorized `rootId` and ordered agent nodes.
+- The report response contains the authorized `rootId` and direct historical
+  duration rows grouped by scoped node and stored work date. Each row includes
+  the node's current completed state but no completion timestamp.
 - A successful node creation contains status `created` or `existing` and one
   agent node.
 - A successful timer mutation contains the target `nodeId`, a status from the
@@ -229,6 +232,13 @@ The operations are:
 - `GET /tree` returns the scope root and its ordered descendants, including the
   allowlisted agent-node fields needed for placement and reconciliation. Its
   root has a `null` parent.
+- `GET /report?from=YYYY-MM-DD&to=YYYY-MM-DD` returns direct historical
+  duration totals for scoped nodes from the inclusive `from` date to the
+  exclusive `to` date, ordered by stored work date and node identifier. It
+  includes completed nodes, preserves stored work dates without timezone
+  conversion or midnight splitting, excludes active timers, and returns an
+  empty row list when no entries match. The existing `/tree` representation
+  and behavior remain unchanged.
 - `POST /nodes` accepts a client-generated UUID, parent UUID, and title, then
   appends the new node beneath the supplied incomplete, in-scope parent. A
   replay with a UUID that already identifies an in-scope node returns that
@@ -280,10 +290,10 @@ semantics without an idempotency table. After an uncertain result, the client
 first reads the tree and repeats an operation only when that operation's
 documented replay behavior is safe.
 
-The initial API does not include bulk operations, manual-entry creation,
-arbitrary time ranges, webhooks, polling, push updates, rate limiting inside
-the application, an OpenAPI explorer, an MCP server, or automatic dashboard
-refresh when an external agent changes data.
+The API does not include bulk operations, manual-entry creation, webhooks,
+polling, push updates, rate limiting inside the application, an OpenAPI
+explorer, an MCP server, or automatic dashboard refresh when an external agent
+changes data.
 
 ### Agent session behavior
 
@@ -639,7 +649,7 @@ It borrows the brand's tokens and restraint, not the marketing page's layout.
 - Server Components perform initial reads. Typed Server Actions perform product
   mutations and revalidate affected data.
 - Better Auth exposes its conventional `/api/auth/[...all]` route. The scoped
-  agent integration adds only its four versioned JSON operations under
+  agent integration adds only its five versioned JSON operations under
   `/api/agent/v1`.
 - The application does not add GraphQL, tRPC, Redux, or a separately deployed
   API.
@@ -868,6 +878,7 @@ route handlers.
   the dashboard for an authorized session.
 - `/api/auth/[...all]` is the Better Auth handler.
 - `/api/agent/v1/tree` is the scoped agent tree read.
+- `/api/agent/v1/report` is the scoped historical-duration report.
 - `/api/agent/v1/nodes` is the scoped child-creation operation.
 - `/api/agent/v1/nodes/[nodeId]/timer` is the idempotent scoped timer start and
   stop operation.
