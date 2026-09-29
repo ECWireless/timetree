@@ -78,6 +78,21 @@ Install the browser used by Playwright when needed:
 corepack pnpm exec playwright install chromium
 ```
 
+## Scoped agent reporting API
+
+A scoped agent bearer key can read direct historical durations for its current
+subtree without changing the existing `/api/agent/v1/tree` response:
+
+```http
+GET /api/agent/v1/report?from=2026-09-01&to=2026-10-01
+Authorization: Bearer <scoped-key>
+```
+
+`from` is inclusive and `to` is exclusive. The response groups entries by node
+and their stored `workDate`, reports each node's current `completed` state, and
+is ordered by date and node identifier. Completed nodes are included; active
+timers, descendant rollups, names, rates, money, and notes are excluded.
+
 ## Database changes
 
 Schema changes belong in `src/db/schema.ts` and must be delivered as reviewed,
