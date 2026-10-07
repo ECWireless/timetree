@@ -125,33 +125,41 @@ describe("initial PostgreSQL schema", () => {
     });
   });
 
-  it("enforces owner-scoped agent credentials with one key per root", async () => {
+  it("enforces owner-scoped labeled agent credentials with multiple keys per root", async () => {
     const ownerId = `user-${randomUUID()}`;
     const otherUserId = `user-${randomUUID()}`;
     await insertUser(ownerId);
     await insertUser(otherUserId);
     const rootNodeId = await insertNode(ownerId, 0);
     const credentialId = randomUUID();
-    const values = [credentialId, ownerId, rootNodeId, "a".repeat(64)];
+    const values = [
+      credentialId,
+      ownerId,
+      rootNodeId,
+      "Application",
+      "read_write",
+      "a".repeat(64),
+    ];
 
     await client.query(
-      `insert into agent_api_keys (id, user_id, root_node_id, secret_hash)
-       values ($1, $2, $3, $4)`,
+      `insert into agent_api_keys
+         (id, user_id, root_node_id, label, access_level, secret_hash)
+       values ($1, $2, $3, $4, $5, $6)`,
       values,
     );
 
-    await client.query("savepoint duplicate_agent_root");
-    await expect(
-      client.query(
-        `insert into agent_api_keys (user_id, root_node_id, secret_hash)
-         values ($1, $2, $3)`,
-        [ownerId, rootNodeId, "b".repeat(64)],
-      ),
-    ).rejects.toMatchObject({
-      code: "23505",
-      constraint: "agent_api_keys_user_root_unique",
-    });
-    await client.query("rollback to savepoint duplicate_agent_root");
+    await client.query(
+      `insert into agent_api_keys
+         (user_id, root_node_id, label, access_level, secret_hash)
+       values ($1, $2, $3, $4, $5)`,
+      [ownerId, rootNodeId, "Client", "read_only", "b".repeat(64)],
+    );
+    const credentials = await client.query<{ count: string }>(
+      `select count(*)::text as count from agent_api_keys
+       where user_id = $1 and root_node_id = $2`,
+      [ownerId, rootNodeId],
+    );
+    expect(credentials.rows[0].count).toBe("2");
 
     await client.query("savepoint cross_owner_agent_root");
     await expect(
@@ -177,6 +185,39 @@ describe("initial PostgreSQL schema", () => {
       constraint: "agent_api_keys_secret_hash_check",
     });
     await client.query("rollback to savepoint invalid_agent_hash");
+
+    for (const [savepoint, column, value, constraint] of [
+      [
+        "invalid_agent_label",
+        "label",
+        " Client ",
+        "agent_api_keys_label_trimmed_length_check",
+      ],
+      [
+        "invalid_agent_access",
+        "access_level",
+        "admin",
+        "agent_api_keys_access_level_check",
+      ],
+    ] as const) {
+      await client.query(`savepoint ${savepoint}`);
+      await expect(
+        client.query(
+          `update agent_api_keys set ${column} = $1 where id = $2`,
+          [value, credentialId],
+        ),
+      ).rejects.toMatchObject({ code: "23514", constraint });
+      await client.query(`rollback to savepoint ${savepoint}`);
+    }
+
+    const index = await client.query<{ definition: string | null }>(
+      `select pg_get_indexdef(
+         to_regclass('public.agent_api_keys_user_root_idx')
+       ) as definition`,
+    );
+    expect(index.rows[0].definition).toBe(
+      "CREATE INDEX agent_api_keys_user_root_idx ON public.agent_api_keys USING btree (user_id, root_node_id)",
+    );
   });
 
   it("rejects an active timer owned by someone other than its node owner", async () => {

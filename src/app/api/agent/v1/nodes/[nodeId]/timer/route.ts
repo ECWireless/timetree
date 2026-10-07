@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { isValidIanaTimeZone } from "@/lib/agent/time-zone";
-import { withAuthorizedAgentKey } from "@/lib/server/agent-api-authorization";
+import {
+  requireAgentWriteAccess,
+  withAuthorizedAgentKey,
+} from "@/lib/server/agent-api-authorization";
 import { AgentApiError } from "@/lib/server/agent-api-errors";
 import {
   bufferAgentJson,
@@ -44,12 +47,14 @@ export async function PUT(request: Request, routeContext: TimerRouteContext) {
   return handleAgentApiRequest(() =>
     withAuthorizedAgentKey(
       getAgentAuthorizationHeader(request),
-      async (context) =>
-        startAgentTimer(
+      async (context) => {
+        requireAgentWriteAccess(context);
+        return startAgentTimer(
           context,
           await parseNodeId(routeContext),
           parseAgentJson(body, startTimerSchema),
-        ),
+        );
+      },
     ),
   );
 }
@@ -61,8 +66,10 @@ export async function DELETE(
   return handleAgentApiRequest(() =>
     withAuthorizedAgentKey(
       getAgentAuthorizationHeader(request),
-      async (context) =>
-        stopAgentTimer(context, await parseNodeId(routeContext)),
+      async (context) => {
+        requireAgentWriteAccess(context);
+        return stopAgentTimer(context, await parseNodeId(routeContext));
+      },
     ),
   );
 }

@@ -21,6 +21,9 @@ let createAgentApiKeyForUser: typeof import(
 let getAgentApiKeyMetadataForUser: typeof import(
   "../../src/lib/server/agent-api-key-service"
 ).getAgentApiKeyMetadataForUser;
+let listAgentApiKeyMetadataForUser: typeof import(
+  "../../src/lib/server/agent-api-key-service"
+).listAgentApiKeyMetadataForUser;
 let revokeAgentApiKeyForUser: typeof import(
   "../../src/lib/server/agent-api-key-service"
 ).revokeAgentApiKeyForUser;
@@ -33,6 +36,9 @@ let generateAgentApiKey: typeof import(
 let parseAgentApiKey: typeof import(
   "../../src/lib/server/agent-api-key-token"
 ).parseAgentApiKey;
+let hashAgentApiKeySecret: typeof import(
+  "../../src/lib/server/agent-api-key-token"
+).hashAgentApiKeySecret;
 let verifyAgentApiKeySecret: typeof import(
   "../../src/lib/server/agent-api-key-token"
 ).verifyAgentApiKeySecret;
@@ -65,10 +71,12 @@ async function readStoredCredential(credentialId: string) {
     id: string;
     user_id: string;
     root_node_id: string;
+    label: string;
+    access_level: string;
     secret_hash: string;
     created_at: Date;
   }>(
-    `select id, user_id, root_node_id, secret_hash, created_at
+    `select id, user_id, root_node_id, label, access_level, secret_hash, created_at
      from agent_api_keys where id = $1`,
     [credentialId],
   );
@@ -87,12 +95,16 @@ describe("agent API key foundation", () => {
       AgentApiKeyMutationError,
       createAgentApiKeyForUser,
       getAgentApiKeyMetadataForUser,
+      listAgentApiKeyMetadataForUser,
       revokeAgentApiKeyForUser,
       rotateAgentApiKeyForUser,
     } = await import("../../src/lib/server/agent-api-key-service"));
-    ({ generateAgentApiKey, parseAgentApiKey, verifyAgentApiKeySecret } = await import(
-      "../../src/lib/server/agent-api-key-token"
-    ));
+    ({
+      generateAgentApiKey,
+      hashAgentApiKeySecret,
+      parseAgentApiKey,
+      verifyAgentApiKeySecret,
+    } = await import("../../src/lib/server/agent-api-key-token"));
     ({ deleteNodeForUser } = await import("../../src/lib/server/node-service"));
   });
 
@@ -118,29 +130,66 @@ describe("agent API key foundation", () => {
     const parsed = parseAgentApiKey(generated.apiKey);
 
     expect(generated.apiKey).toMatch(
-      /^ttk_v1\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/,
+      /^ttk_v2\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/,
     );
     expect(generated.secretHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(parsed?.version).toBe("v2");
     expect(parsed?.credentialId).toBe(generated.credentialId);
     expect(parsed?.secretBytes).toHaveLength(32);
     expect(
       parsed &&
-        verifyAgentApiKeySecret(parsed.secretBytes, generated.secretHash),
+        verifyAgentApiKeySecret(
+          parsed.version,
+          parsed.secretBytes,
+          generated.secretHash,
+        ),
     ).toBe(true);
 
     const other = generateAgentApiKey();
     const otherParsed = parseAgentApiKey(other.apiKey);
     expect(
       otherParsed &&
-        verifyAgentApiKeySecret(otherParsed.secretBytes, generated.secretHash),
+        verifyAgentApiKeySecret(
+          otherParsed.version,
+          otherParsed.secretBytes,
+          generated.secretHash,
+        ),
     ).toBe(false);
-    expect(verifyAgentApiKeySecret(Buffer.alloc(32), "A".repeat(64))).toBe(false);
+    expect(
+      verifyAgentApiKeySecret("v2", Buffer.alloc(32), "A".repeat(64)),
+    ).toBe(false);
+
+    const legacy = parseAgentApiKey(
+      generated.apiKey.replace("ttk_v2.", "ttk_v1."),
+    );
+    expect(legacy?.version).toBe("v1");
+    expect(legacy?.credentialId).toBe(generated.credentialId);
+    const legacyHash =
+      legacy && hashAgentApiKeySecret(legacy.version, legacy.secretBytes);
+    expect(legacyHash).not.toBe(generated.secretHash);
+    expect(
+      legacy &&
+        verifyAgentApiKeySecret(
+          legacy.version,
+          legacy.secretBytes,
+          generated.secretHash,
+        ),
+    ).toBe(false);
+    expect(
+      legacy &&
+        legacyHash &&
+        verifyAgentApiKeySecret(
+          legacy.version,
+          legacy.secretBytes,
+          legacyHash,
+        ),
+    ).toBe(true);
 
     for (const malformed of [
       "",
       generated.apiKey.toUpperCase(),
       `Bearer ${generated.apiKey}`,
-      generated.apiKey.replace("ttk_v1.", "ttk_v2."),
+      generated.apiKey.replace("ttk_v2.", "ttk_v3."),
       `${generated.apiKey}.extra`,
       generated.apiKey.slice(0, -1),
       generated.apiKey.replace(/[A-Za-z0-9_-]$/, "="),
@@ -153,7 +202,10 @@ describe("agent API key foundation", () => {
     const userId = await insertUser();
     const nodeId = await insertNode(userId);
 
-    const created = await createAgentApiKeyForUser(userId, nodeId);
+    const created = await createAgentApiKeyForUser(userId, nodeId, {
+      label: "Application",
+      accessLevel: "read_write",
+    });
     const parsed = parseAgentApiKey(created.apiKey);
     const stored = await readStoredCredential(created.credential.id);
 
@@ -161,22 +213,34 @@ describe("agent API key foundation", () => {
     expect(stored).toMatchObject({
       user_id: userId,
       root_node_id: nodeId,
+      label: "Application",
+      access_level: "read_write",
       secret_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(created.credential).toEqual({
       id: stored.id,
+      label: "Application",
+      accessLevel: "read_write",
       createdAt: stored.created_at.toISOString(),
     });
     expect(
-      parsed && verifyAgentApiKeySecret(parsed.secretBytes, stored.secret_hash),
+      parsed &&
+        verifyAgentApiKeySecret(
+          parsed.version,
+          parsed.secretBytes,
+          stored.secret_hash,
+        ),
     ).toBe(true);
     expect(JSON.stringify(stored)).not.toContain(created.apiKey);
     await expect(getAgentApiKeyMetadataForUser(userId, nodeId)).resolves.toEqual(
       created.credential,
     );
+    await expect(listAgentApiKeyMetadataForUser(userId, nodeId)).resolves.toEqual([
+      created.credential,
+    ]);
   });
 
-  it("owner-scopes metadata and allows only one concurrent creation", async () => {
+  it("owner-scopes metadata and allows distinct concurrent creations", async () => {
     const userId = await insertUser();
     const otherUserId = await insertUser();
     const nodeId = await insertNode(userId);
@@ -188,27 +252,41 @@ describe("agent API key foundation", () => {
       createAgentApiKeyForUser(otherUserId, nodeId),
     ).rejects.toEqual(new AgentApiKeyMutationError("node-not-found"));
 
-    const results = await Promise.allSettled([
-      createAgentApiKeyForUser(userId, nodeId),
-      createAgentApiKeyForUser(userId, nodeId),
+    const results = await Promise.all([
+      createAgentApiKeyForUser(userId, nodeId, {
+        label: "Application",
+        accessLevel: "read_write",
+      }),
+      createAgentApiKeyForUser(userId, nodeId, {
+        label: "Client",
+        accessLevel: "read_only",
+      }),
     ]);
-    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
-    expect(results.filter(({ status }) => status === "rejected")).toEqual([
-      {
-        status: "rejected",
-        reason: new AgentApiKeyMutationError("credential-already-exists"),
-      },
-    ]);
+    expect(results.map(({ credential }) => credential.id)).toHaveLength(2);
+    expect(new Set(results.map(({ credential }) => credential.id)).size).toBe(2);
+    await expect(listAgentApiKeyMetadataForUser(userId, nodeId)).resolves.toEqual(
+      expect.arrayContaining(results.map(({ credential }) => credential)),
+    );
   });
 
   it("rotates once against an expected credential and rejects stale actions", async () => {
     const userId = await insertUser();
     const nodeId = await insertNode(userId);
     const original = await createAgentApiKeyForUser(userId, nodeId);
+    const sibling = await createAgentApiKeyForUser(userId, nodeId, {
+      label: "Unaffected client",
+      accessLevel: "read_only",
+    });
 
     const rotations = await Promise.allSettled([
-      rotateAgentApiKeyForUser(userId, nodeId, original.credential.id),
-      rotateAgentApiKeyForUser(userId, nodeId, original.credential.id),
+      rotateAgentApiKeyForUser(userId, nodeId, original.credential.id, {
+        label: "Client",
+        accessLevel: "read_only",
+      }),
+      rotateAgentApiKeyForUser(userId, nodeId, original.credential.id, {
+        label: "Client",
+        accessLevel: "read_only",
+      }),
     ]);
     const succeeded = rotations.find(
       (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof rotateAgentApiKeyForUser>>> =>
@@ -219,7 +297,7 @@ describe("agent API key foundation", () => {
     expect(rotations.filter(({ status }) => status === "rejected")).toEqual([
       {
         status: "rejected",
-        reason: new AgentApiKeyMutationError("credential-changed"),
+        reason: new AgentApiKeyMutationError("credential-not-found"),
       },
     ]);
     if (!succeeded) {
@@ -229,20 +307,46 @@ describe("agent API key foundation", () => {
     const current = await readStoredCredential(succeeded.value.credential.id);
     const originalParsed = parseAgentApiKey(original.apiKey);
     const rotatedParsed = parseAgentApiKey(succeeded.value.apiKey);
-    expect(originalParsed && verifyAgentApiKeySecret(originalParsed.secretBytes, current.secret_hash)).toBe(
-      false,
-    );
-    expect(rotatedParsed && verifyAgentApiKeySecret(rotatedParsed.secretBytes, current.secret_hash)).toBe(
-      true,
-    );
+    expect(
+      originalParsed &&
+        verifyAgentApiKeySecret(
+          originalParsed.version,
+          originalParsed.secretBytes,
+          current.secret_hash,
+        ),
+    ).toBe(false);
+    expect(
+      rotatedParsed &&
+        verifyAgentApiKeySecret(
+          rotatedParsed.version,
+          rotatedParsed.secretBytes,
+          current.secret_hash,
+        ),
+    ).toBe(true);
+    expect(succeeded.value.credential).toMatchObject({
+      label: "Client",
+      accessLevel: "read_only",
+    });
 
     await expect(
       revokeAgentApiKeyForUser(userId, nodeId, original.credential.id),
-    ).rejects.toEqual(new AgentApiKeyMutationError("credential-changed"));
+    ).rejects.toEqual(new AgentApiKeyMutationError("credential-not-found"));
     await expect(
       revokeAgentApiKeyForUser(userId, nodeId, succeeded.value.credential.id),
     ).resolves.toEqual({ credentialId: succeeded.value.credential.id });
-    await expect(getAgentApiKeyMetadataForUser(userId, nodeId)).resolves.toBeNull();
+    await expect(listAgentApiKeyMetadataForUser(userId, nodeId)).resolves.toEqual([
+      sibling.credential,
+    ]);
+    const siblingParsed = parseAgentApiKey(sibling.apiKey);
+    const siblingStored = await readStoredCredential(sibling.credential.id);
+    expect(
+      siblingParsed &&
+        verifyAgentApiKeySecret(
+          siblingParsed.version,
+          siblingParsed.secretBytes,
+          siblingStored.secret_hash,
+        ),
+    ).toBe(true);
   });
 
   it("cascades credentials with successful node deletion and preserves them on rollback", async () => {

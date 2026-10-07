@@ -30,6 +30,9 @@ let revokeAgentApiKey: typeof import(
 let getAgentApiKeyMetadata: typeof import(
   "../../src/lib/server/agent-api-keys"
 ).getAgentApiKeyMetadata;
+let listAgentApiKeyMetadata: typeof import(
+  "../../src/lib/server/agent-api-keys"
+).listAgentApiKeyMetadata;
 
 vi.mock("next/headers", () => ({
   headers: async () => requestHeaders,
@@ -78,7 +81,7 @@ describe("agent API key owner boundary", () => {
     ({ createAgentApiKey, revokeAgentApiKey, rotateAgentApiKey } = await import(
       "../../src/app/actions/agent-api-keys"
     ));
-    ({ getAgentApiKeyMetadata } = await import(
+    ({ getAgentApiKeyMetadata, listAgentApiKeyMetadata } = await import(
       "../../src/lib/server/agent-api-keys"
     ));
   });
@@ -113,17 +116,26 @@ describe("agent API key owner boundary", () => {
     await expect(getAgentApiKeyMetadata("invalid")).rejects.toEqual(
       new AuthorizationError("missing-session"),
     );
+    await expect(listAgentApiKeyMetadata("invalid")).rejects.toEqual(
+      new AuthorizationError("missing-session"),
+    );
   });
 
   it("returns plaintext once per creation or rotation and metadata thereafter", async () => {
     const { nodeId } = await seedAuthorizedSession();
 
-    const created = await createAgentApiKey({ nodeId });
+    const created = await createAgentApiKey({
+      nodeId,
+      label: "Application",
+      accessLevel: "read_write",
+    });
     expect(created).toMatchObject({
       ok: true,
-      apiKey: expect.stringMatching(/^ttk_v1\./),
+      apiKey: expect.stringMatching(/^ttk_v2\./),
       credential: {
         id: expect.any(String),
+        label: "Application",
+        accessLevel: "read_write",
         createdAt: expect.any(String),
       },
     });
@@ -131,25 +143,44 @@ describe("agent API key owner boundary", () => {
       throw new Error("Expected key creation to succeed.");
     }
     expect(await getAgentApiKeyMetadata(nodeId)).toEqual(created.credential);
-    expect(await createAgentApiKey({ nodeId })).toEqual({
-      ok: false,
-      message: "Agent access already exists for this node.",
+    const client = await createAgentApiKey({
+      nodeId,
+      label: "Client",
+      accessLevel: "read_only",
     });
+    expect(client).toMatchObject({
+      ok: true,
+      credential: { label: "Client", accessLevel: "read_only" },
+    });
+    if (!client.ok) {
+      throw new Error("Expected client key creation to succeed.");
+    }
+    expect(await listAgentApiKeyMetadata(nodeId)).toEqual(
+      expect.arrayContaining([created.credential, client.credential]),
+    );
 
     const rotated = await rotateAgentApiKey({
       nodeId,
       credentialId: created.credential.id,
+      label: "Application reporting",
+      accessLevel: "read_only",
     });
     expect(rotated).toMatchObject({
       ok: true,
-      apiKey: expect.stringMatching(/^ttk_v1\./),
-      credential: { id: expect.any(String) },
+      apiKey: expect.stringMatching(/^ttk_v2\./),
+      credential: {
+        id: expect.any(String),
+        label: "Application reporting",
+        accessLevel: "read_only",
+      },
     });
     if (!rotated.ok) {
       throw new Error("Expected key rotation to succeed.");
     }
     expect(rotated.apiKey).not.toBe(created.apiKey);
-    expect(await getAgentApiKeyMetadata(nodeId)).toEqual(rotated.credential);
+    expect(await listAgentApiKeyMetadata(nodeId)).toEqual(
+      expect.arrayContaining([client.credential, rotated.credential]),
+    );
     expect(
       await revokeAgentApiKey({
         nodeId,
@@ -157,7 +188,7 @@ describe("agent API key owner boundary", () => {
       }),
     ).toEqual({
       ok: false,
-      message: "Agent access changed. Refresh and try again.",
+      message: "Agent access is no longer available.",
     });
 
     expect(
@@ -169,13 +200,26 @@ describe("agent API key owner boundary", () => {
       ok: true,
       credentialId: rotated.credential.id,
     });
-    expect(await getAgentApiKeyMetadata(nodeId)).toBeNull();
+    expect(await listAgentApiKeyMetadata(nodeId)).toEqual([client.credential]);
+    await expect(
+      revokeAgentApiKey({
+        nodeId,
+        credentialId: client.credential.id,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      credentialId: client.credential.id,
+    });
+    expect(await listAgentApiKeyMetadata(nodeId)).toEqual([]);
   });
 
   it("rejects malformed metadata identifiers after owner authorization", async () => {
     await seedAuthorizedSession();
 
     await expect(getAgentApiKeyMetadata("invalid")).rejects.toMatchObject({
+      reason: "node-not-found",
+    });
+    await expect(listAgentApiKeyMetadata("invalid")).rejects.toMatchObject({
       reason: "node-not-found",
     });
   });
@@ -186,6 +230,9 @@ describe("agent API key owner boundary", () => {
 
     process.env.ALLOWED_EMAIL = "replacement-user@example.test";
     await expect(getAgentApiKeyMetadata(nodeId)).rejects.toEqual(
+      new AuthorizationError("disallowed-email"),
+    );
+    await expect(listAgentApiKeyMetadata(nodeId)).rejects.toEqual(
       new AuthorizationError("disallowed-email"),
     );
     await expect(createAgentApiKey({ nodeId })).rejects.toEqual(

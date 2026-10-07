@@ -10,6 +10,7 @@ import type {
   RevokeAgentApiKeyInput,
   RotateAgentApiKeyInput,
 } from "@/lib/agent/contracts";
+import { agentApiKeyAccessLevels } from "@/lib/agent/contracts";
 import {
   AgentApiKeyMutationError,
   createAgentApiKeyForUser,
@@ -18,10 +19,26 @@ import {
 } from "@/lib/server/agent-api-key-service";
 import { requireAuthorizedSession } from "@/lib/server/authorization";
 
-const createSchema = z.object({ nodeId: z.uuid() });
-const existingCredentialSchema = z.object({
+const keyConfigurationSchema = {
+  label: z
+    .string()
+    .trim()
+    .min(1, "Enter a label.")
+    .max(100, "Use 100 characters or fewer."),
+  accessLevel: z.enum(agentApiKeyAccessLevels),
+};
+const createSchema = z.object({
+  nodeId: z.uuid(),
+  label: keyConfigurationSchema.label.default("Agent key"),
+  accessLevel: keyConfigurationSchema.accessLevel.default("read_write"),
+});
+const credentialIdentifierSchema = z.object({
   nodeId: z.uuid(),
   credentialId: z.uuid(),
+});
+const rotateSchema = credentialIdentifierSchema.extend({
+  label: keyConfigurationSchema.label.optional(),
+  accessLevel: keyConfigurationSchema.accessLevel.optional(),
 });
 
 function validationFailure(error: z.ZodError) {
@@ -43,16 +60,6 @@ function mutationFailure(error: unknown) {
   }
 
   switch (error.reason) {
-    case "credential-already-exists":
-      return {
-        ok: false as const,
-        message: "Agent access already exists for this node.",
-      };
-    case "credential-changed":
-      return {
-        ok: false as const,
-        message: "Agent access changed. Refresh and try again.",
-      };
     case "credential-not-found":
       return {
         ok: false as const,
@@ -79,6 +86,10 @@ export async function createAgentApiKey(
     const result = await createAgentApiKeyForUser(
       session.user.id,
       parsed.data.nodeId,
+      {
+        label: parsed.data.label,
+        accessLevel: parsed.data.accessLevel,
+      },
     );
     revalidatePath("/");
     return { ok: true, ...result };
@@ -91,7 +102,7 @@ export async function rotateAgentApiKey(
   input: RotateAgentApiKeyInput,
 ): Promise<AgentApiKeySecretActionResult> {
   const session = await requireAuthorizedSession();
-  const parsed = existingCredentialSchema.safeParse(input);
+  const parsed = rotateSchema.safeParse(input);
   if (!parsed.success) {
     return validationFailure(parsed.error);
   }
@@ -101,6 +112,10 @@ export async function rotateAgentApiKey(
       session.user.id,
       parsed.data.nodeId,
       parsed.data.credentialId,
+      {
+        label: parsed.data.label,
+        accessLevel: parsed.data.accessLevel,
+      },
     );
     revalidatePath("/");
     return { ok: true, ...result };
@@ -113,7 +128,7 @@ export async function revokeAgentApiKey(
   input: RevokeAgentApiKeyInput,
 ): Promise<RevokeAgentApiKeyActionResult> {
   const session = await requireAuthorizedSession();
-  const parsed = existingCredentialSchema.safeParse(input);
+  const parsed = credentialIdentifierSchema.safeParse(input);
   if (!parsed.success) {
     return validationFailure(parsed.error);
   }

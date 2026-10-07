@@ -17,6 +17,7 @@ export type BufferedAgentJson =
 const errorMessages: Record<AgentApiErrorCode, string> = {
   "invalid-request": "Check the request and try again.",
   "invalid-key": "The agent API key is missing or invalid.",
+  "insufficient-scope": "This API key does not allow write operations.",
   "not-found": "The requested resource is not available.",
   "node-completed": "The node is completed.",
   "parent-completed": "The parent node is completed.",
@@ -29,6 +30,7 @@ const errorMessages: Record<AgentApiErrorCode, string> = {
 const statusByCode: Record<AgentApiErrorCode, number> = {
   "invalid-request": 400,
   "invalid-key": 401,
+  "insufficient-scope": 403,
   "not-found": 404,
   "node-completed": 409,
   "parent-completed": 409,

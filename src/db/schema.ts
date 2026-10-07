@@ -194,11 +194,15 @@ export const agentApiKeys = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
     rootNodeId: uuid("root_node_id").notNull(),
+    label: varchar("label", { length: 100 }).default("Agent key").notNull(),
+    accessLevel: varchar("access_level", { length: 16 })
+      .default("read_write")
+      .notNull(),
     secretHash: varchar("secret_hash", { length: 64 }).notNull(),
     createdAt: createdAt(),
   },
   (table) => [
-    unique("agent_api_keys_user_root_unique").on(table.userId, table.rootNodeId),
+    index("agent_api_keys_user_root_idx").on(table.userId, table.rootNodeId),
     foreignKey({
       name: "agent_api_keys_root_owner_fk",
       columns: [table.userId, table.rootNodeId],
@@ -207,6 +211,14 @@ export const agentApiKeys = pgTable(
     check(
       "agent_api_keys_secret_hash_check",
       sql`${table.secretHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "agent_api_keys_label_trimmed_length_check",
+      sql`${table.label} = btrim(${table.label}) and char_length(${table.label}) between 1 and 100`,
+    ),
+    check(
+      "agent_api_keys_access_level_check",
+      sql`${table.accessLevel} in ('read_only', 'read_write')`,
     ),
   ],
 );

@@ -184,7 +184,7 @@ test("creates, rotates, and revokes scoped agent access", async ({
     const credentialValue = dialog.locator(".agent-secret__value code");
     const firstCredentialLine = await credentialValue.textContent();
     expect(
-      /^TIMETREE_API_KEY=ttk_v1\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/.test(
+      /^TIMETREE_API_KEY=ttk_v2\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/.test(
         firstCredentialLine ?? "",
       ),
     ).toBe(true);
@@ -268,7 +268,7 @@ test("creates, rotates, and revokes scoped agent access", async ({
     ).toBeVisible();
     const secondCredentialLine = await credentialValue.textContent();
     expect(
-      /^TIMETREE_API_KEY=ttk_v1\./.test(secondCredentialLine ?? ""),
+      /^TIMETREE_API_KEY=ttk_v2\./.test(secondCredentialLine ?? ""),
     ).toBe(true);
     expect(secondCredentialLine !== firstCredentialLine).toBe(true);
     await expect(closeButton).toBeDisabled();
@@ -482,16 +482,11 @@ test("keeps key management available when harness setup is unavailable", async (
   }
 });
 
-test("reconciles stale create, rotate, and revoke controls across pages", async ({
+test("keeps concurrently created sibling keys independent across pages", async ({
   context,
   page,
 }) => {
   const seeded = await seedAgentAccessNode();
-  await pool.query(
-    `insert into nodes (user_id, position, title)
-     values ($1, 1, 'Unrelated synthetic scope')`,
-    [seeded.userId],
-  );
   const secondPage = await context.newPage();
 
   try {
@@ -524,43 +519,19 @@ test("reconciles stale create, rotate, and revoke controls across pages", async 
       .click();
 
     await secondDialog.getByRole("button", { name: "Create API key" }).click();
-    await expect(secondDialog).toHaveCount(0);
-    await expect(secondPage.locator(".detail-error[role='alert']")).toContainText(
-      "Current agent access has been refreshed.",
-    );
-    const refreshedManageTrigger = secondPage.getByRole("button", {
-      name: "Manage agent access",
-    });
-    await expect(refreshedManageTrigger).toBeFocused();
-    if ((secondPage.viewportSize()?.width ?? 0) <= 760) {
-      await secondPage.getByRole("button", { name: "Back to tree" }).click();
-    }
-    await secondPage
-      .getByRole("button", {
-        name: "Unrelated synthetic scope",
-        exact: true,
-      })
-      .click();
-    await expect(
-      secondPage.getByRole("region", {
-        name: "Node details for Unrelated synthetic scope",
-      }),
-    ).toBeVisible();
-    await expect(
-      secondPage.getByText(/Current agent access has been refreshed\./),
-    ).toHaveCount(0);
-    if ((secondPage.viewportSize()?.width ?? 0) <= 760) {
-      await secondPage.getByRole("button", { name: "Back to tree" }).click();
-    }
-    await secondPage
-      .getByRole("button", { name: "Synthetic agent scope", exact: true })
-      .click();
-    await secondPage
-      .getByRole("button", { name: "Manage agent access" })
+    await secondDialog
+      .getByRole("button", { name: "I’ve saved the key" })
       .click();
     await expect(
       secondDialog.getByText("Active", { exact: true }),
     ).toBeVisible();
+    const createdCredentials = await pool.query<{ id: string }>(
+      `select id
+       from agent_api_keys
+       where user_id = $1 and root_node_id = $2`,
+      [seeded.userId, seeded.nodeId],
+    );
+    expect(createdCredentials.rows).toHaveLength(2);
 
     await firstDialog.getByRole("button", { name: "Rotate API key" }).click();
     await firstDialog
@@ -569,47 +540,6 @@ test("reconciles stale create, rotate, and revoke controls across pages", async 
     await firstDialog
       .getByRole("button", { name: "I’ve saved the key" })
       .click();
-
-    await secondDialog.getByRole("button", { name: "Revoke API key" }).click();
-    await secondDialog
-      .getByRole("button", { name: "Revoke agent access" })
-      .click();
-    await expect(secondDialog).toHaveCount(0);
-    await expect(secondPage.locator(".detail-error[role='alert']")).toContainText(
-      "Current agent access has been refreshed.",
-    );
-    const refreshedAfterRevoke = secondPage.getByRole("button", {
-      name: "Manage agent access",
-    });
-    await expect(refreshedAfterRevoke).toBeFocused();
-    await refreshedAfterRevoke.click();
-    await expect(
-      secondDialog.getByText("Active", { exact: true }),
-    ).toBeVisible();
-    await secondDialog.getByRole("button", { name: "Rotate API key" }).click();
-    await secondDialog
-      .getByRole("button", { name: "Rotate and show new key" })
-      .click();
-    await secondDialog
-      .getByRole("button", { name: "I’ve saved the key" })
-      .click();
-
-    await firstDialog.getByRole("button", { name: "Revoke API key" }).click();
-    await firstDialog
-      .getByRole("button", { name: "Revoke agent access" })
-      .click();
-    await expect(firstDialog).toHaveCount(0);
-    await expect(page.locator(".detail-error[role='alert']")).toContainText(
-      "Current agent access has been refreshed.",
-    );
-    const refreshedAfterSecondRevoke = page.getByRole("button", {
-      name: "Manage agent access",
-    });
-    await expect(refreshedAfterSecondRevoke).toBeFocused();
-    await refreshedAfterSecondRevoke.click();
-    await expect(
-      firstDialog.getByText("Active", { exact: true }),
-    ).toBeVisible();
 
     await secondDialog.getByRole("button", { name: "Revoke API key" }).click();
     await secondDialog
@@ -619,22 +549,20 @@ test("reconciles stale create, rotate, and revoke controls across pages", async 
       secondDialog.getByRole("button", { name: "Create API key" }),
     ).toBeVisible();
 
-    await firstDialog.getByRole("button", { name: "Rotate API key" }).click();
+    await firstDialog.getByRole("button", { name: "Revoke API key" }).click();
     await firstDialog
-      .getByRole("button", { name: "Rotate and show new key" })
+      .getByRole("button", { name: "Revoke agent access" })
       .click();
-    await expect(firstDialog).toHaveCount(0);
-    await expect(page.locator(".detail-error[role='alert']")).toContainText(
-      "Current agent access has been refreshed.",
-    );
-    const refreshedSetupTrigger = page.getByRole("button", {
-      name: "Set up agent access",
-    });
-    await expect(refreshedSetupTrigger).toBeFocused();
-    await refreshedSetupTrigger.click();
     await expect(
       firstDialog.getByRole("button", { name: "Create API key" }),
     ).toBeVisible();
+    const remainingCredentials = await pool.query<{ count: string }>(
+      `select count(*)::text as count
+       from agent_api_keys
+       where user_id = $1 and root_node_id = $2`,
+      [seeded.userId, seeded.nodeId],
+    );
+    expect(remainingCredentials.rows[0].count).toBe("0");
   } finally {
     await secondPage.close();
     await seeded.cleanup();

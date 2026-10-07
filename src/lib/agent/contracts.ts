@@ -1,18 +1,32 @@
+export const agentApiKeyAccessLevels = ["read_only", "read_write"] as const;
+
+export type AgentApiKeyAccessLevel =
+  (typeof agentApiKeyAccessLevels)[number];
+
 export type AgentApiKeyMetadata = {
   id: string;
+  label: string;
+  accessLevel: AgentApiKeyAccessLevel;
   createdAt: string;
 };
 
 export type CreateAgentApiKeyInput = {
   nodeId: string;
+  label?: string;
+  accessLevel?: AgentApiKeyAccessLevel;
 };
 
 export type RotateAgentApiKeyInput = {
   nodeId: string;
   credentialId: string;
+  label?: string;
+  accessLevel?: AgentApiKeyAccessLevel;
 };
 
-export type RevokeAgentApiKeyInput = RotateAgentApiKeyInput;
+export type RevokeAgentApiKeyInput = {
+  nodeId: string;
+  credentialId: string;
+};
 
 export type AgentApiKeySecretActionResult =
   | {
@@ -97,6 +111,7 @@ export type StopAgentTimerResponse = {
 export type AgentApiErrorCode =
   | "invalid-request"
   | "invalid-key"
+  | "insufficient-scope"
   | "not-found"
   | "node-completed"
   | "parent-completed"
