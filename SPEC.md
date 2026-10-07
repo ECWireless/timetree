@@ -111,55 +111,72 @@ server operations. The tree remains TimeTree's primary editing interface.
 
 TimeTree supports a narrow bearer-key integration for coding agents that record
 their work in an authorized node subtree. The integration extends the private
-single-owner product; it does not introduce general users, roles, shared trees,
-or public links.
+single-owner product. Bearer keys may be delegated to applications or clients,
+but they do not introduce general users, roles, client identities, shared-tree
+pages, or public links.
 
 ### Credential lifecycle
 
 - The authenticated owner can create agent access for a selected node from its
   dashboard details.
-- A selected node has at most one active agent API key. Creating a key fails
-  when one already exists; rotating a key replaces it and invalidates the
-  previous key.
+- A selected node can have multiple independently managed active API keys. Each
+  key has a required owner-visible label and an access level of `read_only` or
+  `read_write`.
+- A read-only key can use the complete existing tree and report reads. A
+  read-write key can also create scoped child nodes and start or stop scoped
+  timers.
+- Rotating one key replaces its credential identifier and secret, may change
+  its label or access level, and leaves every other key on the node unchanged.
 - The plaintext key is generated from cryptographically secure random material,
   shown only once, and never stored by TimeTree. The database stores only the
   lookup material and a one-way hash needed to authenticate it.
 - Secret verification uses a constant-time comparison.
-- A version-one key has the bounded format
-  `ttk_v1.<credential UUID>.<43-character base64url secret>`. The UUID is a
-  public lookup selector, and the secret encodes exactly 32 random bytes. The
-  stored `secretHash` is the lowercase 64-character hexadecimal SHA-256 digest
-  of the secret bytes. Authentication strictly parses the complete token and
-  compares fixed-length digest bytes in constant time.
-- The owner can revoke the key without changing, completing, or deleting its
-  scoped node.
-- The key has no automatic expiration in the initial integration. Rotation and
-  revocation are explicit owner actions.
-- Deleting an otherwise deletable scoped node also deletes its credential.
+- New and rotated keys use the bounded version-two format
+  `ttk_v2.<credential UUID>.<43-character base64url secret>`. Version-one keys
+  created before access levels remain accepted only as read-write credentials;
+  a `ttk_v1` token can never authorize a row marked read-only. This preserves
+  existing integrations while ensuring that rolling application code back to a
+  version that does not understand access levels rejects every newly issued
+  key instead of widening its authority. Version-two verification is
+  cryptographically domain-separated from version one: new rows store the
+  lowercase 64-character hexadecimal SHA-256 digest of the fixed UTF-8 domain
+  `timetree-agent-api-key:v2`, a zero byte, and the secret bytes in that order.
+  Legacy version-one rows retain the SHA-256 digest of only the secret bytes, so
+  changing a version-two token's prefix cannot make it verify as version one.
+  The UUID is a public lookup selector, and the secret encodes exactly 32 random
+  bytes. Authentication strictly parses the complete `ttk_v1` or `ttk_v2`
+  token and compares fixed-length digest bytes in constant time.
+- The owner can revoke one selected key without changing, completing, or
+  deleting its scoped node or affecting sibling keys.
+- Keys have no automatic expiration. Rotation and revocation are explicit
+  owner actions.
+- Deleting an otherwise deletable scoped node also deletes all of its
+  credentials.
 - Agent-key authentication preserves the deployment's single-account boundary.
   A key is rejected when its owning user is no longer the configured, verified
   allowed identity.
 - TimeTree adds one credential table for this integration. It does not add agent
   session, agent-specific node, timer-provenance, or time-entry-provenance
   records.
-- Agent requests lock and revalidate the current credential inside the same
+- Agent requests lock and revalidate the presented credential inside the same
   transaction that authorizes the subtree and performs the read or mutation.
   A bounded selector lookup may identify the candidate owner and root before
   the transaction, but grants no authority. Create, rotate, revoke, node
   deletion, and agent requests then lock the owner row, owner node rows in
-  stable identifier order, and the credential row in that order before
-  revalidating the secret and scope.
+  stable identifier order, and relevant credential rows in stable identifier
+  order before revalidating the secret, access level, and scope.
 - Rotation and revocation wait for previously linearized mutations. After
   either owner action returns, no operation authenticated with the replaced or
   revoked key can subsequently commit a mutation. A read that linearized
   earlier may finish delivering its already-authorized response.
-- Initial creation, rotation, and revocation require the full authorized owner
-  session. Rotation and revocation identify the currently displayed credential
-  row so a concurrent stale action cannot replace or revoke a newer key. Only
-  one concurrent create or rotation can succeed.
-- The initial integration does not include multiple named keys per node, key
-  labels, expiration policies, last-used tracking, per-key audit history, or
-  permission customization.
+- Creation, rotation, and revocation require the full authorized owner session.
+  Rotation and revocation identify one currently displayed credential row so a
+  concurrent stale action cannot replace or revoke a newer key. Concurrent
+  creation may create distinct keys; only one concurrent rotation of the same
+  credential can succeed.
+- The integration does not include expiration policies, last-used tracking,
+  per-key audit history, client identities, or permissions beyond read-only and
+  read-write.
 
 An agent key is a bearer credential. Setup instructions require HTTPS except
 for local development, require the key in the `Authorization` header rather
@@ -185,9 +202,10 @@ the key in generated harness instructions.
   mutations. A concurrent move, rotation, or revocation cannot turn an
   authorized create, start, or stop into an out-of-scope or post-revocation
   mutation.
-- The key can read node placement data and active-timer state within its scope,
-  create children beneath incomplete scoped nodes, and start or stop timers on
-  scoped nodes.
+- Every key can read node placement data, active-timer state, and reports within
+  its scope. A read-write key can also create children beneath incomplete
+  scoped nodes and start or stop timers on scoped nodes. A read-only key receives
+  `insufficient-scope` for every mutation without request-input validation.
 - The key cannot rename, describe, re-rate, move, complete, reopen, or delete
   nodes. It cannot create, edit, move, or delete historical entries.
 - A key may stop the active timer on any node in its subtree regardless of
@@ -203,7 +221,8 @@ the key in generated harness instructions.
 ### Agent API
 
 The versioned API is rooted at `/api/agent/v1` on the configured canonical
-public origin. It provides five operations.
+public origin. It provides five authenticated operations and one public OpenAPI
+description.
 
 The API exposes only these representations:
 
@@ -229,6 +248,10 @@ historical-entry records.
 
 The operations are:
 
+- `GET /openapi.json` returns a cacheable OpenAPI 3.1 description of the full
+  version-one API, bearer authentication, access-level requirements, schemas,
+  finite errors, and secret-handling guidance. It contains no credential or
+  owner data and requires no authentication.
 - `GET /tree` returns the scope root and its ordered descendants, including the
   allowlisted agent-node fields needed for placement and reconciliation. Its
   root has a `null` parent.
@@ -261,7 +284,7 @@ stops retain the normal minimum duration, exact timestamp, and historical
 integrity behavior. Repeated work intervals on one session node therefore
 produce multiple ordinary historical entries.
 
-The API:
+The authenticated API:
 
 - accepts the key only as a bearer token in the `Authorization` header;
 - returns JSON and disables response caching;
@@ -269,6 +292,8 @@ The API:
 - validates bounded request bodies, UUIDs, and IANA time zones before mutation;
 - uses an unauthorized response for a missing, malformed, revoked, or
   disallowed-owner credential;
+- uses a forbidden `insufficient-scope` response when a valid read-only key is
+  presented to a mutation operation;
 - uses the same not-found response for missing and out-of-scope resources;
 - distinguishes validation and lifecycle conflicts without exposing private
   tree data; and
@@ -276,14 +301,15 @@ The API:
   result was uncertain.
 
 The finite error codes are `invalid-request` for caller input, `invalid-key` for
-credential failure, `not-found` for missing or outside resources,
+credential failure, `insufficient-scope` for a read-only mutation attempt,
+`not-found` for missing or outside resources,
 `node-completed` or `parent-completed` for lifecycle conflicts,
 `node-id-conflict` for an unusable client-generated creation UUID,
 `position-conflict` for an exhausted concurrent-create retry, `timer-too-long`
 for an unrecordable active timer, and `internal-error` for an otherwise
 unexposed server failure. They map respectively to validation, unauthorized,
-not-found, conflict, or server-error HTTP status classes without adding
-resource details.
+forbidden, not-found, conflict, or server-error HTTP status classes without
+adding resource details.
 
 The client-generated node UUID and idempotent timer operations provide replay
 semantics without an idempotency table. After an uncertain result, the client
@@ -292,8 +318,8 @@ documented replay behavior is safe.
 
 The API does not include bulk operations, manual-entry creation, webhooks,
 polling, push updates, rate limiting inside the application, an OpenAPI
-explorer, an MCP server, or automatic dashboard refresh when an external agent
-changes data.
+explorer, an MCP server, credential expiration, or automatic dashboard refresh
+when an external agent changes data.
 
 ### Agent session behavior
 
@@ -333,10 +359,10 @@ access, or disabled harness integration. Persistent timers, startup detection,
 the dashboard's active-timer strip, and owner correction of historical entries
 are the recovery mechanisms for the initial integration.
 
-### Codex harness and repository setup
+### Agent harness and repository setup
 
 The selected-node agent-access dialog separates harness installation from
-repository connection.
+credential management and repository or client connection.
 
 The Codex harness setup:
 
@@ -361,7 +387,8 @@ The global activation rule applies the skill only when the current repository's
 local `.env` defines `TIMETREE_API_KEY`. Because the deployment origin is
 embedded in the generated skill, the repository does not require a separate
 TimeTree URL environment variable. Using one harness with multiple TimeTree
-deployments is outside the initial integration.
+deployments is outside the initial integration. The timekeeping skill requires
+a read-write key because its workflow creates nodes and controls timers.
 
 The embedded API origin is the normalized origin from the server-validated
 `BETTER_AUTH_URL`, not an untrusted request host. Harness setup is available
@@ -376,14 +403,20 @@ skill. Regenerating the one-time harness setup updates the zone after the
 owner's calendar location changes. The repository key remains independent of
 the zone.
 
-The repository connection setup:
+Credential management and connection setup:
 
-- is labeled as a per-repository action associated with the selected node;
-- displays the newly generated key once and provides a copyable
-  `TIMETREE_API_KEY=<key>` line;
+- lists the selected node's keys by label, access level, and creation date and
+  provides per-key rotation and revocation;
+- creates a key from an owner-supplied label and a read-only or read-write
+  access choice without replacing sibling keys;
+- displays each newly generated or rotated key once and provides both a raw
+  secret copy action and a copyable `TIMETREE_API_KEY=<key>` line;
 - tells the user to verify that `.env` is untracked and ignored before adding
-  the credential; and
-- offers a non-mutating connection-verification prompt after setup.
+  a repository credential;
+- offers a non-mutating connection-verification prompt after setup; and
+- offers a read-only client-agent setup prompt that points to the canonical
+  OpenAPI document, permits only the two GET operations, treats returned text
+  as untrusted data, and never embeds the bearer secret.
 
 The dialog does not attempt to remember whether harness setup was copied or
 installed. Copying a prompt is not proof that a particular Codex installation
@@ -392,10 +425,11 @@ the prompt into any Codex session on each installation they want to configure,
 and the setup instructions remain available whenever they reopen the dialog.
 
 The one-time secret and agent-setup flow is an explicit exception to the
-dashboard's general preference against modals. The initial integration targets
-Codex. Generated setup for other harnesses, automatic installation from the
-browser, Codex lifecycle hooks, plugins, and repository-local skill
-distribution are outside its scope.
+dashboard's general preference against modals. The timekeeping integration
+targets Codex, while the OpenAPI description and read-only setup prompt remain
+harness-neutral. Automatic installation from the browser, Codex lifecycle
+hooks, plugins, repository-local skill distribution, and an MCP server are
+outside its scope.
 
 ### Integrated live acceptance
 
@@ -403,15 +437,18 @@ After the backend and dashboard integration pass their automated, independent,
 privacy, security, and user-interface review gates, one final live
 end-to-end scenario verifies the complete workflow with synthetic data:
 
-1. Create a fresh scoped node and API key in a running TimeTree environment.
+1. Create a fresh scoped node with one read-write key and one read-only key in a
+   running TimeTree environment.
 2. Use a fresh synthetic repository and Codex environment to apply the
    generated one-time harness setup and per-repository credential.
 3. Run one short agent work interval that reads the scoped tree, creates or
    selects its session node, starts its timer, and stops it.
 4. Confirm in TimeTree that the expected node and one historical entry exist,
-   and confirm that a parent or sibling identifier is inaccessible.
-5. Revoke the key, confirm that another request is rejected, and remove the
-   synthetic test data where the normal lifecycle permits it.
+   that both keys can read the same scoped tree and report, that the read-only
+   key receives `insufficient-scope` for a mutation, and that a parent or
+   sibling identifier is inaccessible.
+5. Revoke each key independently, confirm that each revoked key is rejected,
+   and remove the synthetic test data where the normal lifecycle permits it.
 
 The scenario uses wholly synthetic parent and sibling nodes. Browser traces,
 screenshots, command echo, and other credential-bearing capture are disabled or
@@ -761,17 +798,20 @@ Integrity rules:
 - `id`
 - `userId`
 - `rootNodeId`
+- `label`
+- `accessLevel`
 - `secretHash`
 - `createdAt`
 
 Integrity rules:
 
 - Credential and scope root must belong to the same user.
-- A unique constraint on owner and scope root guarantees at most one active key
-  per selected node.
+- An owner-and-root index supports listing multiple keys for one selected node.
+- Labels are trimmed, non-empty, and limited to 100 characters.
+- Access level is exactly `read_only` or `read_write`.
 - `id` is the public UUID lookup selector encoded in the bearer key.
 - `secretHash` is a lowercase fixed-length SHA-256 hexadecimal digest.
-- Deleting the scope root cascades to its credential.
+- Deleting the scope root cascades to all of its credentials.
 - The plaintext secret is never stored.
 
 ### Node deletion
@@ -806,8 +846,9 @@ adds one narrow, capability-oriented agent API.
   timers.
 - `getNodeEntries(nodeId, cursor?)` returns the selected node's 50 most recent
   direct entries and an optional cursor for loading older entries.
-- `getAgentApiKeyMetadata(nodeId)` returns only the selected node's current
-  credential identifier and creation time to the authorized owner.
+- `listAgentApiKeyMetadata(nodeId)` returns only the selected node's credential
+  identifiers, labels, access levels, and creation times to the authorized
+  owner.
 - Selected-node context, including its resolved rate, is folded into the
   dashboard read where practical rather than exposed as a general endpoint.
 - Node title search and breadcrumb matching happen client-side over the already
@@ -849,18 +890,20 @@ access. In addition, every action:
 
 Agent-key management actions authorize the owner before validating caller
 input, owner-scope the selected node and expected credential identifier, and
-serialize through the shared owner-node-credential lock order. Creation
-requires no existing row. Rotation replaces only the expected current row with
-a newly identified credential, and revocation removes only the expected
-current row, so concurrent stale actions fail safely. Creation and rotation
-return the plaintext key in exactly one dynamic, non-cacheable response; the
-client keeps it only in ephemeral modal state, and later reads return metadata
-without the secret.
+serialize through the shared owner-node-credential lock order. Creation appends
+a distinct credential. Rotation replaces only the expected selected row with a
+newly identified credential, and revocation removes only the expected selected
+row, so concurrent stale actions fail safely without affecting sibling keys.
+Creation and rotation return the plaintext key in exactly one dynamic,
+non-cacheable response; the client keeps it only in ephemeral modal state, and
+later reads return metadata without the secret.
 
 Every agent operation uses a separate centralized bearer-key guard that:
 
 - Accepts credentials only from the `Authorization` header.
 - Authenticates the stored hash with constant-time comparison.
+- Revalidates the stored access level and rejects read-only mutation attempts
+  before parsing caller-controlled mutation input.
 - Reuses the browser guard's normalization and exact-comparison helper to
   re-evaluate the owning user's verified email against `ALLOWED_EMAIL`.
 - Resolves the current scope root and owner without exposing either on failure.
@@ -877,6 +920,7 @@ route handlers.
 - `/` renders a branded Google sign-in state for unauthenticated visitors and
   the dashboard for an authorized session.
 - `/api/auth/[...all]` is the Better Auth handler.
+- `/api/agent/v1/openapi.json` is the public, cacheable OpenAPI description.
 - `/api/agent/v1/tree` is the scoped agent tree read.
 - `/api/agent/v1/report` is the scoped historical-duration report.
 - `/api/agent/v1/nodes` is the scoped child-creation operation.
@@ -972,12 +1016,16 @@ DashboardPage (server)
 - PostgreSQL integration tests cover ownership boundaries, cycle prevention,
   active-timer uniqueness, atomic timer stopping, recursive completion, moves,
   history-safe deletion, owner-scoped period-filtered aggregates, agent-key
-  lifecycle, token parsing and verification, dynamic subtree authorization,
-  replay-safe creation, work-date derivation, and scoped mutation races against
-  moves, rotation, revocation, and node deletion.
+  lifecycle, multiple credentials per scope, token parsing and verification,
+  read-only mutation rejection, dynamic subtree authorization, replay-safe
+  creation, work-date derivation, and scoped mutation races against moves,
+  rotation, revocation, and node deletion.
+- Unit tests keep the OpenAPI document aligned with the route surface,
+  permission model, and allowlisted response schemas.
 - A focused Playwright Chromium suite covers the primary workflow at desktop
   and mobile viewport widths, including one-time key display, harness setup,
-  rotation, and revocation.
+  multiple labeled keys, access-level selection, one-time key display, client
+  setup, rotation, and revocation.
 - Browser tests create a real Better Auth test session. Application code does
   not expose an authentication-bypass route.
 - CI runs linting, type checking, unit and integration tests, a production

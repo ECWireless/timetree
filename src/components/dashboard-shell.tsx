@@ -81,7 +81,7 @@ import {
 type DashboardShellProps = {
   activeTimers: ActiveTimerRecord[];
   email: string;
-  initialAgentApiKeyMetadata: AgentApiKeyMetadata | null;
+  initialAgentApiKeyMetadata: AgentApiKeyMetadata[];
   initialNowMilliseconds: number;
   initialEntryPage: TimeEntryPage;
   nodes: FlatNode[];
@@ -1665,10 +1665,10 @@ export function DashboardShell({
                     setAgentAccessDialogOpen(true);
                   }}
                 >
-                  {initialAgentApiKeyMetadata
+                  {initialAgentApiKeyMetadata.length > 0
                     ? agentAccessRefreshing
                       ? "Refreshing agent access…"
-                      : "Manage agent access"
+                      : `Manage ${initialAgentApiKeyMetadata.length} ${initialAgentApiKeyMetadata.length === 1 ? "key" : "keys"}`
                     : agentAccessRefreshing
                       ? "Refreshing agent access…"
                       : "Set up agent access"}
@@ -1788,7 +1788,7 @@ export function DashboardShell({
         <AgentAccessDialog
           key={selectedNode.id}
           canonicalOrigin={timeTreeCanonicalOrigin}
-          initialCredential={initialAgentApiKeyMetadata}
+          initialCredentials={initialAgentApiKeyMetadata}
           nodeId={selectedNode.id}
           nodeTitle={selectedNode.title}
           onClose={() => setAgentAccessDialogOpen(false)}

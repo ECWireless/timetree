@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { withAuthorizedAgentKey } from "@/lib/server/agent-api-authorization";
+import {
+  requireAgentWriteAccess,
+  withAuthorizedAgentKey,
+} from "@/lib/server/agent-api-authorization";
 import {
   bufferAgentJson,
   getAgentAuthorizationHeader,
@@ -28,11 +31,13 @@ export async function POST(request: Request) {
   return handleAgentApiRequest(() =>
     withAuthorizedAgentKey(
       getAgentAuthorizationHeader(request),
-      async (context) =>
-        createAgentNode(
+      async (context) => {
+        requireAgentWriteAccess(context);
+        return createAgentNode(
           context,
           parseAgentJson(body, createNodeSchema),
-        ),
+        );
+      },
     ),
   );
 }

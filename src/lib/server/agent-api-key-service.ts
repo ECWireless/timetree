@@ -1,10 +1,13 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { agentApiKeys } from "@/db/schema";
-import type { AgentApiKeyMetadata } from "@/lib/agent/contracts";
+import type {
+  AgentApiKeyAccessLevel,
+  AgentApiKeyMetadata,
+} from "@/lib/agent/contracts";
 import {
   generateAgentApiKey,
   type ParsedAgentApiKey,
@@ -16,10 +19,18 @@ import {
 } from "@/lib/server/node-service";
 
 type AgentApiKeyMutationReason =
-  | "credential-already-exists"
-  | "credential-changed"
   | "credential-not-found"
   | "node-not-found";
+
+type AgentApiKeyConfiguration = {
+  label: string;
+  accessLevel: AgentApiKeyAccessLevel;
+};
+
+const defaultAgentApiKeyConfiguration: AgentApiKeyConfiguration = {
+  label: "Agent key",
+  accessLevel: "read_write",
+};
 
 export class AgentApiKeyMutationError extends Error {
   constructor(public readonly reason: AgentApiKeyMutationReason) {
@@ -31,6 +42,8 @@ export class AgentApiKeyMutationError extends Error {
 function toMetadata(row: typeof agentApiKeys.$inferSelect): AgentApiKeyMetadata {
   return {
     id: row.id,
+    label: row.label,
+    accessLevel: row.accessLevel as AgentApiKeyAccessLevel,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -44,10 +57,11 @@ function requireLockedNode(
   }
 }
 
-async function lockCredentialForRoot(
+async function lockCredential(
   tx: NodeTransaction,
   userId: string,
   rootNodeId: string,
+  credentialId: string,
 ) {
   const [credential] = await tx
     .select()
@@ -56,6 +70,7 @@ async function lockCredentialForRoot(
       and(
         eq(agentApiKeys.userId, userId),
         eq(agentApiKeys.rootNodeId, rootNodeId),
+        eq(agentApiKeys.id, credentialId),
       ),
     )
     .for("update")
@@ -64,23 +79,10 @@ async function lockCredentialForRoot(
   return credential ?? null;
 }
 
-function isUniqueCredentialConflict(error: unknown) {
-  let current: unknown = error;
-  while (typeof current === "object" && current !== null) {
-    if (
-      "code" in current &&
-      current.code === "23505" &&
-      "constraint" in current &&
-      current.constraint === "agent_api_keys_user_root_unique"
-    ) {
-      return true;
-    }
-    current = "cause" in current ? current.cause : null;
-  }
-  return false;
-}
-
-export async function getAgentApiKeyMetadataForUser(userId: string, nodeId: string) {
+export async function listAgentApiKeyMetadataForUser(
+  userId: string,
+  nodeId: string,
+) {
   const [node] = await db.query.nodes.findMany({
     where: (table, { and: all, eq: equals }) =>
       all(equals(table.userId, userId), equals(table.id, nodeId)),
@@ -91,7 +93,7 @@ export async function getAgentApiKeyMetadataForUser(userId: string, nodeId: stri
     throw new AgentApiKeyMutationError("node-not-found");
   }
 
-  const [credential] = await db
+  const credentials = await db
     .select()
     .from(agentApiKeys)
     .where(
@@ -100,59 +102,64 @@ export async function getAgentApiKeyMetadataForUser(userId: string, nodeId: stri
         eq(agentApiKeys.rootNodeId, nodeId),
       ),
     )
-    .limit(1);
+    .orderBy(asc(agentApiKeys.createdAt), asc(agentApiKeys.id));
 
-  return credential ? toMetadata(credential) : null;
+  return credentials.map(toMetadata);
 }
 
-export async function createAgentApiKeyForUser(userId: string, rootNodeId: string) {
-  try {
-    return await db.transaction(async (tx) => {
-      const lockedNodes = await lockOwnerNodes(tx, userId);
-      requireLockedNode(lockedNodes, rootNodeId);
-      const existing = await lockCredentialForRoot(tx, userId, rootNodeId);
-      if (existing) {
-        throw new AgentApiKeyMutationError("credential-already-exists");
-      }
+export async function getAgentApiKeyMetadataForUser(
+  userId: string,
+  nodeId: string,
+) {
+  return (await listAgentApiKeyMetadataForUser(userId, nodeId))[0] ?? null;
+}
 
-      const generated = generateAgentApiKey();
-      const [credential] = await tx
-        .insert(agentApiKeys)
-        .values({
-          id: generated.credentialId,
-          userId,
-          rootNodeId,
-          secretHash: generated.secretHash,
-        })
-        .returning();
+export async function createAgentApiKeyForUser(
+  userId: string,
+  rootNodeId: string,
+  configuration: AgentApiKeyConfiguration = defaultAgentApiKeyConfiguration,
+) {
+  return db.transaction(async (tx) => {
+    const lockedNodes = await lockOwnerNodes(tx, userId);
+    requireLockedNode(lockedNodes, rootNodeId);
 
-      return {
-        credential: toMetadata(credential),
-        apiKey: generated.apiKey,
-      };
-    });
-  } catch (error) {
-    if (isUniqueCredentialConflict(error)) {
-      throw new AgentApiKeyMutationError("credential-already-exists");
-    }
-    throw error;
-  }
+    const generated = generateAgentApiKey();
+    const [credential] = await tx
+      .insert(agentApiKeys)
+      .values({
+        id: generated.credentialId,
+        userId,
+        rootNodeId,
+        label: configuration.label,
+        accessLevel: configuration.accessLevel,
+        secretHash: generated.secretHash,
+      })
+      .returning();
+
+    return {
+      credential: toMetadata(credential),
+      apiKey: generated.apiKey,
+    };
+  });
 }
 
 export async function rotateAgentApiKeyForUser(
   userId: string,
   rootNodeId: string,
   expectedCredentialId: string,
+  configuration?: Partial<AgentApiKeyConfiguration>,
 ) {
   return db.transaction(async (tx) => {
     const lockedNodes = await lockOwnerNodes(tx, userId);
     requireLockedNode(lockedNodes, rootNodeId);
-    const current = await lockCredentialForRoot(tx, userId, rootNodeId);
+    const current = await lockCredential(
+      tx,
+      userId,
+      rootNodeId,
+      expectedCredentialId,
+    );
     if (!current) {
       throw new AgentApiKeyMutationError("credential-not-found");
-    }
-    if (current.id !== expectedCredentialId) {
-      throw new AgentApiKeyMutationError("credential-changed");
     }
 
     const generated = generateAgentApiKey();
@@ -170,6 +177,8 @@ export async function rotateAgentApiKeyForUser(
         id: generated.credentialId,
         userId,
         rootNodeId,
+        label: configuration?.label ?? current.label,
+        accessLevel: configuration?.accessLevel ?? current.accessLevel,
         secretHash: generated.secretHash,
       })
       .returning();
@@ -189,12 +198,14 @@ export async function revokeAgentApiKeyForUser(
   return db.transaction(async (tx) => {
     const lockedNodes = await lockOwnerNodes(tx, userId);
     requireLockedNode(lockedNodes, rootNodeId);
-    const current = await lockCredentialForRoot(tx, userId, rootNodeId);
+    const current = await lockCredential(
+      tx,
+      userId,
+      rootNodeId,
+      expectedCredentialId,
+    );
     if (!current) {
       throw new AgentApiKeyMutationError("credential-not-found");
-    }
-    if (current.id !== expectedCredentialId) {
-      throw new AgentApiKeyMutationError("credential-changed");
     }
 
     await tx
@@ -214,5 +225,5 @@ export function verifyParsedAgentApiKey(
   parsed: ParsedAgentApiKey,
   storedHash: string,
 ) {
-  return verifyAgentApiKeySecret(parsed.secretBytes, storedHash);
+  return verifyAgentApiKeySecret(parsed.version, parsed.secretBytes, storedHash);
 }

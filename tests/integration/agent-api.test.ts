@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
@@ -117,6 +117,19 @@ async function seedTree() {
 function authorizationHeaders(apiKey: string) {
   return {
     Authorization: `Bearer ${apiKey}`,
+  };
+}
+
+function toLegacyV1Credential(apiKey: string) {
+  const [prefix, credentialId, secret] = apiKey.split(".");
+  if (prefix !== "ttk_v2" || !credentialId || !secret) {
+    throw new Error("Expected a generated v2 credential.");
+  }
+  return {
+    apiKey: `ttk_v1.${credentialId}.${secret}`,
+    secretHash: createHash("sha256")
+      .update(Buffer.from(secret, "base64url"))
+      .digest("hex"),
   };
 }
 
@@ -275,6 +288,131 @@ describe("scoped agent API", () => {
     expect(await readJson(invalidPathWithKey)).toMatchObject({
       code: "invalid-request",
       fields: { nodeId: ["Use a valid node identifier."] },
+    });
+  });
+
+  it("allows complete reads and rejects every mutation for a read-only sibling key", async () => {
+    const tree = await seedTree();
+    const readOnly = await createAgentApiKeyForUser(
+      tree.userId,
+      tree.rootNodeId,
+      { label: "Client", accessLevel: "read_only" },
+    );
+
+    const treeResponse = await treeGET(
+      new Request("http://localhost/api/agent/v1/tree", {
+        headers: authorizationHeaders(readOnly.apiKey),
+      }),
+    );
+    expect(treeResponse.status).toBe(200);
+    expect(await readJson(treeResponse)).toMatchObject({
+      rootId: tree.rootNodeId,
+    });
+
+    const reportResponse = await reportGET(
+      new Request(
+        "http://localhost/api/agent/v1/report?from=2026-01-01&to=2026-02-01",
+        { headers: authorizationHeaders(readOnly.apiKey) },
+      ),
+    );
+    expect(reportResponse.status).toBe(200);
+    expect(await readJson(reportResponse)).toEqual({
+      rootId: tree.rootNodeId,
+      rows: [],
+    });
+
+    const mutationResponses = await Promise.all([
+      nodesPOST(
+        new Request("http://localhost/api/agent/v1/nodes", {
+          method: "POST",
+          headers: {
+            ...authorizationHeaders(readOnly.apiKey),
+            "Content-Type": "application/json",
+          },
+          body: "{",
+        }),
+      ),
+      timerPUT(
+        new Request("http://localhost/api/agent/v1/nodes/invalid/timer", {
+          method: "PUT",
+          headers: {
+            ...authorizationHeaders(readOnly.apiKey),
+            "Content-Type": "application/json",
+          },
+          body: "{",
+        }),
+        timerContext("invalid"),
+      ),
+      timerDELETE(
+        new Request("http://localhost/api/agent/v1/nodes/invalid/timer", {
+          method: "DELETE",
+          headers: authorizationHeaders(readOnly.apiKey),
+        }),
+        timerContext("invalid"),
+      ),
+    ]);
+
+    for (const response of mutationResponses) {
+      expect(response.status).toBe(403);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await readJson(response)).toEqual({
+        code: "insufficient-scope",
+        message: "This API key does not allow write operations.",
+      });
+    }
+  });
+
+  it("rejects v2 prefix downgrades and accepts genuine v1 keys only as read-write", async () => {
+    const tree = await seedTree();
+    const readOnly = await createAgentApiKeyForUser(
+      tree.userId,
+      tree.rootNodeId,
+      { label: "Client", accessLevel: "read_only" },
+    );
+    const downgradedReadOnlyKey = readOnly.apiKey.replace(
+      "ttk_v2.",
+      "ttk_v1.",
+    );
+    const downgraded = await treeGET(
+      new Request("http://localhost/api/agent/v1/tree", {
+        headers: authorizationHeaders(downgradedReadOnlyKey),
+      }),
+    );
+    expect(downgraded.status).toBe(401);
+
+    const legacyReadWrite = toLegacyV1Credential(tree.apiKey);
+    const legacyReadOnly = toLegacyV1Credential(readOnly.apiKey);
+    await pool.query(
+      `update agent_api_keys
+       set secret_hash = case id
+         when $1 then $2
+         when $3 then $4
+       end
+       where id in ($1, $3)`,
+      [
+        tree.credentialId,
+        legacyReadWrite.secretHash,
+        readOnly.credential.id,
+        legacyReadOnly.secretHash,
+      ],
+    );
+
+    const accepted = await treeGET(
+      new Request("http://localhost/api/agent/v1/tree", {
+        headers: authorizationHeaders(legacyReadWrite.apiKey),
+      }),
+    );
+    expect(accepted.status).toBe(200);
+
+    const rejected = await treeGET(
+      new Request("http://localhost/api/agent/v1/tree", {
+        headers: authorizationHeaders(legacyReadOnly.apiKey),
+      }),
+    );
+    expect(rejected.status).toBe(401);
+    expect(await readJson(rejected)).toEqual({
+      code: "invalid-key",
+      message: "The agent API key is missing or invalid.",
     });
   });
 

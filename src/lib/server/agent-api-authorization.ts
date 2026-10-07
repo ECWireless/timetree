@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { agentApiKeys, user } from "@/db/schema";
 import { isAllowedIdentity } from "@/lib/auth/policy";
+import type { AgentApiKeyAccessLevel } from "@/lib/agent/contracts";
 import { AgentApiError } from "@/lib/server/agent-api-errors";
 import { parseAgentApiKey, verifyAgentApiKeySecret } from "@/lib/server/agent-api-key-token";
 import { getAllowedEmail } from "@/lib/server/allowed-email";
@@ -19,6 +20,7 @@ export type AuthorizedAgentContext = {
   tx: NodeTransaction;
   userId: string;
   rootNodeId: string;
+  accessLevel: AgentApiKeyAccessLevel;
   nodes: readonly FlatNode[];
   scopeNodeIds: ReadonlySet<string>;
 };
@@ -26,6 +28,19 @@ export type AuthorizedAgentContext = {
 function parseBearerKey(authorizationHeader: string | null) {
   const match = authorizationHeader?.match(/^Bearer ([^\s]+)$/i);
   return match ? parseAgentApiKey(match[1]) : null;
+}
+
+function isAgentApiKeyAccessLevel(
+  value: string,
+): value is AgentApiKeyAccessLevel {
+  return value === "read_only" || value === "read_write";
+}
+
+function isVersionCompatibleWithAccessLevel(
+  version: "v1" | "v2",
+  accessLevel: AgentApiKeyAccessLevel,
+) {
+  return version === "v2" || accessLevel === "read_write";
 }
 
 export async function withAuthorizedAgentKey<T>(
@@ -42,6 +57,7 @@ export async function withAuthorizedAgentKey<T>(
       id: agentApiKeys.id,
       userId: agentApiKeys.userId,
       rootNodeId: agentApiKeys.rootNodeId,
+      accessLevel: agentApiKeys.accessLevel,
       secretHash: agentApiKeys.secretHash,
     })
     .from(agentApiKeys)
@@ -49,7 +65,13 @@ export async function withAuthorizedAgentKey<T>(
     .limit(1);
   if (
     !candidate ||
-    !verifyAgentApiKeySecret(parsed.secretBytes, candidate.secretHash)
+    !isAgentApiKeyAccessLevel(candidate.accessLevel) ||
+    !isVersionCompatibleWithAccessLevel(parsed.version, candidate.accessLevel) ||
+    !verifyAgentApiKeySecret(
+      parsed.version,
+      parsed.secretBytes,
+      candidate.secretHash,
+    )
   ) {
     throw new AgentApiError("invalid-key");
   }
@@ -70,7 +92,14 @@ export async function withAuthorizedAgentKey<T>(
     if (
       !credential ||
       credential.rootNodeId !== candidate.rootNodeId ||
-      !verifyAgentApiKeySecret(parsed.secretBytes, credential.secretHash)
+      credential.accessLevel !== candidate.accessLevel ||
+      !isAgentApiKeyAccessLevel(credential.accessLevel) ||
+      !isVersionCompatibleWithAccessLevel(parsed.version, credential.accessLevel) ||
+      !verifyAgentApiKeySecret(
+        parsed.version,
+        parsed.secretBytes,
+        credential.secretHash,
+      )
     ) {
       throw new AgentApiError("invalid-key");
     }
@@ -98,8 +127,15 @@ export async function withAuthorizedAgentKey<T>(
       tx,
       userId: candidate.userId,
       rootNodeId: credential.rootNodeId,
+      accessLevel: credential.accessLevel,
       nodes: lockedNodes,
       scopeNodeIds,
     });
   });
+}
+
+export function requireAgentWriteAccess(context: AuthorizedAgentContext) {
+  if (context.accessLevel !== "read_write") {
+    throw new AgentApiError("insufficient-scope");
+  }
 }
