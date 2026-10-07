@@ -2137,8 +2137,7 @@ textarea {
   color: #92e6ac;
 }
 
-.agent-setup-copy,
-.agent-credential > p {
+.agent-setup-copy {
   margin: 0.75rem 0 1rem;
   color: var(--color-muted);
   font-size: 0.8125rem;
@@ -2278,23 +2277,152 @@ textarea {
   color: #fffca6;
 }
 
-.agent-credential__date {
-  margin-top: -0.45rem !important;
-  font-size: 0.7rem !important;
+.agent-secret__metadata,
+.agent-key-card__heading,
+.agent-key-form__heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-.agent-credential__management {
-  border-top: 1px solid rgb(154 166 178 / 18%);
+.agent-secret__metadata {
+  align-items: center;
+  margin: 0.85rem 0;
+}
+
+.agent-secret__copies {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.agent-secret__copies > div {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.agent-key-form {
+  display: grid;
+  gap: 0.85rem;
+  border: 1px solid rgb(115 185 245 / 24%);
+  border-radius: 0.55rem;
   margin-top: 1rem;
-  padding-top: 1rem;
+  padding: 0.85rem;
+  background: rgb(18 99 173 / 6%);
 }
 
-.agent-credential__management h4 {
+.agent-key-form__heading h4,
+.agent-key-card__heading h4,
+.agent-key-card__heading p {
   margin: 0;
+}
+
+.agent-key-form__heading h4,
+.agent-key-card__heading h4 {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
+.agent-key-form__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 1fr);
+  gap: 1rem;
+}
+
+.agent-key-form__fields > label,
+.agent-key-access {
+  min-width: 0;
+}
+
+.agent-key-access {
+  display: grid;
+  gap: 0.55rem;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-key-access legend {
+  margin-bottom: 0.4rem;
   color: var(--color-muted);
-  font-size: 0.68rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.agent-key-access .choice-row {
+  align-items: start;
+}
+
+.agent-key-access .choice-row > span {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.agent-key-access .choice-row strong {
+  font-size: 0.78rem;
+}
+
+.agent-key-access .choice-row small {
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.agent-key-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.agent-key-card {
+  border: 1px solid rgb(154 166 178 / 22%);
+  border-radius: 0.55rem;
+  padding: 0.85rem;
+  background: rgb(5 6 8 / 65%);
+}
+
+.agent-key-card__heading p {
+  margin-top: 0.25rem;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+}
+
+.agent-key-access-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgb(115 185 245 / 38%);
+  border-radius: 999px;
+  padding: 0.25rem 0.5rem;
+  color: #9bcbf5;
+  font-size: 0.65rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.agent-key-card__scope,
+.agent-key-card__setup-warning {
+  margin: 0.7rem 0;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.agent-key-card__setup,
+.agent-key-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.agent-key-card__actions {
+  border-top: 1px solid rgb(154 166 178 / 18%);
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
 }
 
 .agent-confirmation {
@@ -2833,6 +2961,30 @@ textarea {
 
   .agent-setup-section > .button,
   .agent-secret .button {
+    width: 100%;
+  }
+
+  .agent-secret__metadata,
+  .agent-key-card__heading,
+  .agent-key-form__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-secret__copies,
+  .agent-key-form__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-key-card__setup,
+  .agent-key-card__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-key-card__setup .button,
+  .agent-key-card__actions .button,
+  .agent-key-form > .button {
     width: 100%;
   }
 

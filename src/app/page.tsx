@@ -3,7 +3,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { AuthorizationError } from "@/lib/auth/policy";
 import type { AgentApiKeyMetadata } from "@/lib/agent/contracts";
-import { getAgentApiKeyMetadata } from "@/lib/server/agent-api-keys";
+import { listAgentApiKeyMetadata } from "@/lib/server/agent-api-keys";
 import { getTimeTreeCanonicalOrigin } from "@/lib/server/agent-setup";
 import { getDashboardData } from "@/lib/server/dashboard";
 import { getNodeEntries } from "@/lib/server/time-entries";
@@ -43,11 +43,11 @@ export default async function Home({ searchParams }: HomeProps) {
   if (dashboard) {
     const selectedNodeExists = Boolean(node && dashboard.nodes.some((candidate) => candidate.id === node));
     let initialEntryPage: TimeEntryPage = { entries: [], nextCursor: null };
-    let initialAgentApiKeyMetadata: AgentApiKeyMetadata | null = null;
+    let initialAgentApiKeyMetadata: AgentApiKeyMetadata[] = [];
     if (selectedNodeExists) {
       [initialEntryPage, initialAgentApiKeyMetadata] = await Promise.all([
         getNodeEntries(node!),
-        getAgentApiKeyMetadata(node!),
+        listAgentApiKeyMetadata(node!),
       ]);
     }
     let timeTreeCanonicalOrigin: string | null = null;
