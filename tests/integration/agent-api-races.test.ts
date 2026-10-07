@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 
 const connectionString = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 
@@ -121,6 +121,205 @@ function timerContext(nodeId: string) {
   return { params: Promise.resolve({ nodeId }) };
 }
 
+type RaceTree = Awaited<ReturnType<typeof seedTree>>;
+type MutationKind = "node-create" | "timer-start" | "timer-stop";
+type CredentialChange = "downgrade" | "revoke";
+type BarrierRelation = "active_timers" | "agent_api_keys" | "nodes";
+
+type PreparedMutation = {
+  barrierRelation: Exclude<BarrierRelation, "agent_api_keys">;
+  run: (apiKey: string) => Promise<Response>;
+  assertCommitted: () => Promise<void>;
+  assertNotCommitted: () => Promise<void>;
+};
+
+const mutationKinds = ["node-create", "timer-start", "timer-stop"] as const;
+const credentialChanges = ["downgrade", "revoke"] as const;
+const raceCases = credentialChanges.flatMap((credentialChange) =>
+  mutationKinds.map((mutationKind) => ({ credentialChange, mutationKind })),
+);
+
+async function countRows(query: string, values: unknown[]) {
+  const result = await pool.query<{ count: string }>(query, values);
+  return result.rows[0].count;
+}
+
+async function prepareMutation(
+  tree: RaceTree,
+  mutationKind: MutationKind,
+): Promise<PreparedMutation> {
+  if (mutationKind === "node-create") {
+    const createdId = randomUUID();
+    const countCreated = () =>
+      countRows(
+        `select count(*) from nodes where user_id = $1 and id = $2`,
+        [tree.userId, createdId],
+      );
+    return {
+      barrierRelation: "nodes",
+      run: (apiKey) =>
+        nodesPOST(nodeRequest(apiKey, createdId, tree.rootNodeId)),
+      async assertCommitted() {
+        await expect(countCreated()).resolves.toBe("1");
+      },
+      async assertNotCommitted() {
+        await expect(countCreated()).resolves.toBe("0");
+      },
+    };
+  }
+
+  const countTimers = () =>
+    countRows(
+      `select count(*) from active_timers
+       where user_id = $1 and node_id = $2`,
+      [tree.userId, tree.deletableNodeId],
+    );
+  const countEntries = () =>
+    countRows(
+      `select count(*) from time_entries
+       where user_id = $1 and node_id = $2`,
+      [tree.userId, tree.deletableNodeId],
+    );
+
+  if (mutationKind === "timer-start") {
+    return {
+      barrierRelation: "active_timers",
+      run: (apiKey) =>
+        timerPUT(
+          timerRequest(apiKey, tree.deletableNodeId),
+          timerContext(tree.deletableNodeId),
+        ),
+      async assertCommitted() {
+        await expect(countTimers()).resolves.toBe("1");
+      },
+      async assertNotCommitted() {
+        await expect(countTimers()).resolves.toBe("0");
+      },
+    };
+  }
+
+  await pool.query(
+    `insert into active_timers
+       (user_id, node_id, started_at, work_date)
+     values ($1, $2, $3, '2026-10-07')`,
+    [
+      tree.userId,
+      tree.deletableNodeId,
+      new Date("2026-10-07T22:00:00.000Z"),
+    ],
+  );
+  return {
+    barrierRelation: "active_timers",
+    run: (apiKey) =>
+      timerDELETE(
+        new Request(
+          `http://localhost/api/agent/v1/nodes/${tree.deletableNodeId}/timer`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${apiKey}` },
+          },
+        ),
+        timerContext(tree.deletableNodeId),
+      ),
+    async assertCommitted() {
+      await expect(countTimers()).resolves.toBe("0");
+      await expect(countEntries()).resolves.toBe("1");
+    },
+    async assertNotCommitted() {
+      await expect(countTimers()).resolves.toBe("1");
+      await expect(countEntries()).resolves.toBe("0");
+    },
+  };
+}
+
+async function openRelationBarrier(relation: BarrierRelation) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(`lock table "${relation}" in share mode`);
+    return client;
+  } catch (error) {
+    try {
+      await client.query("rollback");
+      client.release();
+    } catch (cleanupError) {
+      client.release(cleanupError instanceof Error ? cleanupError : true);
+      throw new AggregateError(
+        [error, cleanupError],
+        `Failed to establish and clean up the ${relation} barrier.`,
+      );
+    }
+    throw error;
+  }
+}
+
+async function releaseRelationBarrier(client: PoolClient) {
+  try {
+    await client.query("rollback");
+    client.release();
+  } catch (error) {
+    client.release(error instanceof Error ? error : true);
+    throw error;
+  }
+}
+
+async function waitForBlockedRelation(
+  client: PoolClient,
+  relation: BarrierRelation,
+) {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    const result = await client.query<{ blocked: boolean }>(
+      `select exists (
+         select 1
+         from pg_locks
+         where relation = $1::regclass and not granted
+       ) as blocked`,
+      [relation],
+    );
+    if (result.rows[0].blocked) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for a blocked ${relation} lock.`);
+}
+
+async function expectPending(promise: Promise<unknown>) {
+  let settled = false;
+  void promise.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(settled).toBe(false);
+}
+
+async function changeCredential(
+  tree: RaceTree,
+  credentialChange: CredentialChange,
+) {
+  if (credentialChange === "revoke") {
+    await revokeAgentApiKeyForUser(
+      tree.userId,
+      tree.rootNodeId,
+      tree.credentialId,
+    );
+    return null;
+  }
+
+  return rotateAgentApiKeyForUser(
+    tree.userId,
+    tree.rootNodeId,
+    tree.credentialId,
+    { label: "Downgraded client", accessLevel: "read_only" },
+  );
+}
+
 describe("agent scope mutation races", () => {
   beforeAll(async () => {
     vi.stubEnv(
@@ -224,6 +423,97 @@ describe("agent scope mutation races", () => {
     );
     expect(retry.status).toBe(401);
   });
+
+  it.each(raceCases)(
+    "lets $mutationKind finish before $credentialChange returns when the request owns the lock order",
+    async ({ credentialChange, mutationKind }) => {
+      const tree = await seedTree();
+      const prepared = await prepareMutation(tree, mutationKind);
+      const barrier = await openRelationBarrier(prepared.barrierRelation);
+      const inFlight: Promise<unknown>[] = [];
+
+      try {
+        const requestPromise = prepared.run(tree.apiKey);
+        inFlight.push(requestPromise);
+        await waitForBlockedRelation(barrier, prepared.barrierRelation);
+        const credentialChangePromise = changeCredential(
+          tree,
+          credentialChange,
+        );
+        inFlight.push(credentialChangePromise);
+        await expectPending(credentialChangePromise);
+        await barrier.query("commit");
+
+        const response = await requestPromise;
+        const changed = await credentialChangePromise;
+        expect(response.status).toBe(200);
+        await prepared.assertCommitted();
+
+        const oldKeyRetry = await prepared.run(tree.apiKey);
+        expect(oldKeyRetry.status).toBe(401);
+        if (changed) {
+          const downgradedRetry = await prepared.run(changed.apiKey);
+          expect(downgradedRetry.status).toBe(403);
+        }
+      } finally {
+        let cleanupError: unknown;
+        try {
+          await releaseRelationBarrier(barrier);
+        } catch (error) {
+          cleanupError = error;
+        }
+        await Promise.allSettled(inFlight);
+        if (cleanupError) {
+          throw cleanupError;
+        }
+      }
+    },
+  );
+
+  it.each(raceCases)(
+    "prevents $mutationKind from committing after $credentialChange wins the lock order",
+    async ({ credentialChange, mutationKind }) => {
+      const tree = await seedTree();
+      const prepared = await prepareMutation(tree, mutationKind);
+      const barrier = await openRelationBarrier("agent_api_keys");
+      const inFlight: Promise<unknown>[] = [];
+
+      try {
+        const credentialChangePromise = changeCredential(
+          tree,
+          credentialChange,
+        );
+        inFlight.push(credentialChangePromise);
+        await waitForBlockedRelation(barrier, "agent_api_keys");
+        const requestPromise = prepared.run(tree.apiKey);
+        inFlight.push(requestPromise);
+        await expectPending(requestPromise);
+        await barrier.query("commit");
+
+        const changed = await credentialChangePromise;
+        const response = await requestPromise;
+        expect(response.status).toBe(401);
+        await prepared.assertNotCommitted();
+
+        if (changed) {
+          const downgradedRetry = await prepared.run(changed.apiKey);
+          expect(downgradedRetry.status).toBe(403);
+          await prepared.assertNotCommitted();
+        }
+      } finally {
+        let cleanupError: unknown;
+        try {
+          await releaseRelationBarrier(barrier);
+        } catch (error) {
+          cleanupError = error;
+        }
+        await Promise.allSettled(inFlight);
+        if (cleanupError) {
+          throw cleanupError;
+        }
+      }
+    },
+  );
 
   it("never creates beneath a node after it moves outside the scope", async () => {
     const tree = await seedTree();
